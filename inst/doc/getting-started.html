@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Getting Started with climatehealth</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Getting Started with climatehealth</h1>
+
+
+
+<div id="what-is-climatehealth" class="section level2">
+<h2>What is climatehealth?</h2>
+<p>The <strong>climatehealth</strong> package provides R functions for
+calculating climate–health indicators following the statistical
+framework developed under the <a href="https://climate-health.officialstatistics.org">SOSCHI (Standards
+for Official Statistics on Climate–Health Interactions)</a> project. It
+covers indicators for six climate-health topic areas:</p>
+<table>
+<thead>
+<tr class="header">
+<th>Topic</th>
+<th>Lead</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Temperature-related health effects</td>
+<td>ONS</td>
+</tr>
+<tr class="even">
+<td>Health effects of wildfires</td>
+<td>ONS</td>
+</tr>
+<tr class="odd">
+<td>Mental health (suicides and heat)</td>
+<td>ONS</td>
+</tr>
+<tr class="even">
+<td>Water-borne diseases (diarrhoea)</td>
+<td>AIMS</td>
+</tr>
+<tr class="odd">
+<td>Health effects of air pollution</td>
+<td>AIMS</td>
+</tr>
+<tr class="even">
+<td>Vector-borne diseases (malaria)</td>
+<td>RIPS/AIMS</td>
+</tr>
+</tbody>
+</table>
+<p>Each topic has a dedicated analysis function that takes a data file
+path and column mappings, fits the appropriate statistical models, and
+returns results and optional plots.</p>
+<hr />
+</div>
+<div id="installation" class="section level2">
+<h2>Installation</h2>
+<div id="from-cran" class="section level3">
+<h3>From CRAN</h3>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">install.packages</span>(<span class="st">&quot;climatehealth&quot;</span>)</span></code></pre></div>
+</div>
+<div id="from-github-latest-development-version" class="section level3">
+<h3>From GitHub (latest development version)</h3>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="fu">install.packages</span>(<span class="st">&quot;remotes&quot;</span>)</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>remotes<span class="sc">::</span><span class="fu">install_github</span>(<span class="st">&quot;onssoschi/climatehealth&quot;</span>)</span></code></pre></div>
+</div>
+<div id="optional-dependencies" class="section level3">
+<h3>Optional dependencies</h3>
+<p>Two indicators (malaria and diarrhoea) depend on
+<strong>INLA</strong> and <strong>terra</strong> respectively, which are
+not on CRAN and must be installed separately if needed:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>climatehealth<span class="sc">::</span><span class="fu">install_INLA</span>()</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>climatehealth<span class="sc">::</span><span class="fu">install_terra</span>()</span></code></pre></div>
+<p>Once installed, load the package:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">library</span>(climatehealth)</span></code></pre></div>
+<hr />
+</div>
+</div>
+<div id="package-workflow" class="section level2">
+<h2>Package workflow</h2>
+<p>All six indicator functions follow the same pattern:</p>
+<ol style="list-style-type: decimal">
+<li><strong>Provide a path</strong> to your input CSV.</li>
+<li><strong>Map your column names</strong> to the function’s expected
+arguments (or use the defaults if your data already matches them).</li>
+<li><strong>Choose optional extras</strong>: covariates, meta-analysis,
+output saving.</li>
+<li><strong>Inspect the returned list</strong> for model results, plots,
+and summary tables.</li>
+</ol>
+<pre><code>your_data.csv  --&gt;  indicator_do_analysis()  --&gt;  results list
+                                              --&gt;  figures (optional)
+                                              --&gt;  CSV outputs (optional)</code></pre>
+<hr />
+</div>
+<div id="your-first-analysis-temperature-and-mortality" class="section level2">
+<h2>Your first analysis: temperature and mortality</h2>
+<p><code>temp_mortality_do_analysis()</code> estimates the association
+between ambient temperature and mortality using a distributed lag
+non-linear model (DLNM).</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">temp_mortality_do_analysis</span>(</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>  <span class="at">data_path        =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>  <span class="at">date_col         =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>  <span class="at">region_col       =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>  <span class="at">temperature_col  =</span> <span class="st">&quot;tmean&quot;</span>,</span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>  <span class="at">health_outcome_col =</span> <span class="st">&quot;deaths&quot;</span>,</span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>  <span class="at">population_col   =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a>  <span class="at">meta_analysis    =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>  <span class="at">save_fig         =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>  <span class="at">save_csv         =</span> <span class="cn">FALSE</span></span>
+<span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>)</span></code></pre></div>
+<p>The returned object <code>res</code> is a named list. Common fields
+include:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>res<span class="sc">$</span>data_raw          <span class="co"># the input data as loaded</span></span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>res<span class="sc">$</span>analysis_results  <span class="co"># model coefficients and confidence intervals</span></span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>res<span class="sc">$</span>meta_results      <span class="co"># pooled estimates (when meta_analysis = TRUE)</span></span></code></pre></div>
+<div id="adding-covariates" class="section level3">
+<h3>Adding covariates</h3>
+<p>Pass extra column names via <code>independent_cols</code> (continuous
+exposures) and <code>control_cols</code> (factors such as day-of-week or
+public holidays):</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">temp_mortality_do_analysis</span>(</span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a>  <span class="at">data_path          =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a>  <span class="at">date_col           =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>  <span class="at">region_col         =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a>  <span class="at">temperature_col    =</span> <span class="st">&quot;tmean&quot;</span>,</span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a>  <span class="at">health_outcome_col =</span> <span class="st">&quot;deaths&quot;</span>,</span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>  <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a>  <span class="at">independent_cols   =</span> <span class="fu">c</span>(<span class="st">&quot;humidity&quot;</span>, <span class="st">&quot;ozone&quot;</span>),</span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a>  <span class="at">control_cols       =</span> <span class="fu">c</span>(<span class="st">&quot;dow&quot;</span>, <span class="st">&quot;holiday_flag&quot;</span>),</span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a>  <span class="at">meta_analysis      =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a>  <span class="at">save_fig           =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a>  <span class="at">save_csv           =</span> <span class="cn">FALSE</span></span>
+<span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div id="pooling-across-regions-with-meta-analysis" class="section level3">
+<h3>Pooling across regions with meta-analysis</h3>
+<p>Set <code>meta_analysis = TRUE</code> to pool region-level estimates
+into a single national estimate:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">temp_mortality_do_analysis</span>(</span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>  <span class="at">data_path          =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a>  <span class="at">date_col           =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a>  <span class="at">region_col         =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a>  <span class="at">temperature_col    =</span> <span class="st">&quot;tmean&quot;</span>,</span>
+<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>  <span class="at">health_outcome_col =</span> <span class="st">&quot;deaths&quot;</span>,</span>
+<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a>  <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a>  <span class="at">country            =</span> <span class="st">&quot;National&quot;</span>,</span>
+<span id="cb9-9"><a href="#cb9-9" tabindex="-1"></a>  <span class="at">meta_analysis      =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb9-10"><a href="#cb9-10" tabindex="-1"></a>  <span class="at">save_fig           =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb9-11"><a href="#cb9-11" tabindex="-1"></a>  <span class="at">save_csv           =</span> <span class="cn">FALSE</span></span>
+<span id="cb9-12"><a href="#cb9-12" tabindex="-1"></a>)</span></code></pre></div>
+<hr />
+</div>
+</div>
+<div id="the-six-indicators" class="section level2">
+<h2>The six indicators</h2>
+<div id="air-pollution" class="section level3">
+<h3>Air pollution</h3>
+<p><code>air_pollution_do_analysis()</code> estimates attributable
+mortality burden from PM2.5 exposure. By default it expects columns
+named <code>date</code>, <code>region</code>, <code>pm25</code>,
+<code>deaths</code>, <code>population</code>, <code>humidity</code>,
+<code>precipitation</code>, <code>tmax</code>, and
+<code>wind_speed</code>.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">air_pollution_do_analysis</span>(</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>  <span class="at">data_path       =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>  <span class="at">save_outputs    =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="at">run_descriptive =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a>  <span class="at">run_power       =</span> <span class="cn">TRUE</span></span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>)</span></code></pre></div>
+<p>Compare against multiple PM2.5 reference thresholds in a single
+run:</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">air_pollution_do_analysis</span>(</span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a>  <span class="at">data_path         =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a>  <span class="at">reference_standards =</span> <span class="fu">list</span>(</span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a>    <span class="fu">list</span>(<span class="at">value =</span> <span class="dv">15</span>, <span class="at">name =</span> <span class="st">&quot;WHO&quot;</span>),</span>
+<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a>    <span class="fu">list</span>(<span class="at">value =</span> <span class="dv">25</span>, <span class="at">name =</span> <span class="st">&quot;National&quot;</span>)</span>
+<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>  ),</span>
+<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>  <span class="at">save_outputs =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a>  <span class="at">run_power    =</span> <span class="cn">TRUE</span></span>
+<span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div id="wildfires" class="section level3">
+<h3>Wildfires</h3>
+<p><code>wildfire_do_analysis()</code> estimates the health impact of
+wildfire smoke exposure.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">wildfire_do_analysis</span>(</span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a>  <span class="at">data_path          =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a>  <span class="at">date_col           =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a>  <span class="at">region_col         =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a>  <span class="at">exposure_col       =</span> <span class="st">&quot;pm25_fire&quot;</span>,</span>
+<span id="cb12-6"><a href="#cb12-6" tabindex="-1"></a>  <span class="at">health_outcome_col =</span> <span class="st">&quot;respiratory_admissions&quot;</span>,</span>
+<span id="cb12-7"><a href="#cb12-7" tabindex="-1"></a>  <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb12-8"><a href="#cb12-8" tabindex="-1"></a>  <span class="at">meta_analysis      =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb12-9"><a href="#cb12-9" tabindex="-1"></a>  <span class="at">save_fig           =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb12-10"><a href="#cb12-10" tabindex="-1"></a>  <span class="at">save_csv           =</span> <span class="cn">FALSE</span></span>
+<span id="cb12-11"><a href="#cb12-11" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div id="mental-health-suicides-and-heat" class="section level3">
+<h3>Mental health (suicides and heat)</h3>
+<p><code>suicides_heat_do_analysis()</code> models the association
+between temperature and suicide counts.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">suicides_heat_do_analysis</span>(</span>
+<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a>  <span class="at">data_path          =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a>  <span class="at">date_col           =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb13-4"><a href="#cb13-4" tabindex="-1"></a>  <span class="at">region_col         =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb13-5"><a href="#cb13-5" tabindex="-1"></a>  <span class="at">temperature_col    =</span> <span class="st">&quot;tmean&quot;</span>,</span>
+<span id="cb13-6"><a href="#cb13-6" tabindex="-1"></a>  <span class="at">health_outcome_col =</span> <span class="st">&quot;suicides&quot;</span>,</span>
+<span id="cb13-7"><a href="#cb13-7" tabindex="-1"></a>  <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb13-8"><a href="#cb13-8" tabindex="-1"></a>  <span class="at">meta_analysis      =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb13-9"><a href="#cb13-9" tabindex="-1"></a>  <span class="at">save_fig           =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb13-10"><a href="#cb13-10" tabindex="-1"></a>  <span class="at">save_csv           =</span> <span class="cn">FALSE</span></span>
+<span id="cb13-11"><a href="#cb13-11" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div id="water-borne-diseases-diarrhoea" class="section level3">
+<h3>Water-borne diseases (diarrhoea)</h3>
+<p><code>diarrhea_do_analysis()</code> estimates climate-driven
+diarrhoea burden.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">diarrhea_do_analysis</span>(</span>
+<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a>  <span class="at">data_path          =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb14-3"><a href="#cb14-3" tabindex="-1"></a>  <span class="at">date_col           =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb14-4"><a href="#cb14-4" tabindex="-1"></a>  <span class="at">region_col         =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb14-5"><a href="#cb14-5" tabindex="-1"></a>  <span class="at">temperature_col    =</span> <span class="st">&quot;tmean&quot;</span>,</span>
+<span id="cb14-6"><a href="#cb14-6" tabindex="-1"></a>  <span class="at">health_outcome_col =</span> <span class="st">&quot;diarrhea_cases&quot;</span>,</span>
+<span id="cb14-7"><a href="#cb14-7" tabindex="-1"></a>  <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb14-8"><a href="#cb14-8" tabindex="-1"></a>  <span class="at">meta_analysis      =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb14-9"><a href="#cb14-9" tabindex="-1"></a>  <span class="at">save_fig           =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb14-10"><a href="#cb14-10" tabindex="-1"></a>  <span class="at">save_csv           =</span> <span class="cn">FALSE</span></span>
+<span id="cb14-11"><a href="#cb14-11" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div id="vector-borne-diseases-malaria" class="section level3">
+<h3>Vector-borne diseases (malaria)</h3>
+<p><code>malaria_do_analysis()</code> requires the <strong>INLA</strong>
+package (see Installation above).</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">malaria_do_analysis</span>(</span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a>  <span class="at">data_path          =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a>  <span class="at">date_col           =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a>  <span class="at">region_col         =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a>  <span class="at">temperature_col    =</span> <span class="st">&quot;tmean&quot;</span>,</span>
+<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a>  <span class="at">health_outcome_col =</span> <span class="st">&quot;malaria_cases&quot;</span>,</span>
+<span id="cb15-7"><a href="#cb15-7" tabindex="-1"></a>  <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb15-8"><a href="#cb15-8" tabindex="-1"></a>  <span class="at">meta_analysis      =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb15-9"><a href="#cb15-9" tabindex="-1"></a>  <span class="at">save_fig           =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb15-10"><a href="#cb15-10" tabindex="-1"></a>  <span class="at">save_csv           =</span> <span class="cn">FALSE</span></span>
+<span id="cb15-11"><a href="#cb15-11" tabindex="-1"></a>)</span></code></pre></div>
+<hr />
+</div>
+</div>
+<div id="descriptive-statistics" class="section level2">
+<h2>Descriptive statistics</h2>
+<p>Before running an indicator analysis, use
+<code>run_descriptive_stats()</code> to explore your data:
+distributions, correlations, missing values, outliers, and seasonal
+patterns.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a>df <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">&quot;path/to/your/data.csv&quot;</span>)</span>
+<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a></span>
+<span id="cb16-3"><a href="#cb16-3" tabindex="-1"></a>desc <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">run_descriptive_stats</span>(</span>
+<span id="cb16-4"><a href="#cb16-4" tabindex="-1"></a>  <span class="at">data               =</span> df,</span>
+<span id="cb16-5"><a href="#cb16-5" tabindex="-1"></a>  <span class="at">output_path        =</span> <span class="st">&quot;path/to/output/folder&quot;</span>,</span>
+<span id="cb16-6"><a href="#cb16-6" tabindex="-1"></a>  <span class="at">aggregation_column =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb16-7"><a href="#cb16-7" tabindex="-1"></a>  <span class="at">dependent_col      =</span> <span class="st">&quot;deaths&quot;</span>,</span>
+<span id="cb16-8"><a href="#cb16-8" tabindex="-1"></a>  <span class="at">independent_cols   =</span> <span class="fu">c</span>(<span class="st">&quot;tmean&quot;</span>, <span class="st">&quot;humidity&quot;</span>, <span class="st">&quot;rainfall&quot;</span>),</span>
+<span id="cb16-9"><a href="#cb16-9" tabindex="-1"></a>  <span class="at">plot_corr_matrix   =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb16-10"><a href="#cb16-10" tabindex="-1"></a>  <span class="at">plot_dist          =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb16-11"><a href="#cb16-11" tabindex="-1"></a>  <span class="at">plot_na_counts     =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb16-12"><a href="#cb16-12" tabindex="-1"></a>  <span class="at">plot_scatter       =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb16-13"><a href="#cb16-13" tabindex="-1"></a>  <span class="at">plot_box           =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb16-14"><a href="#cb16-14" tabindex="-1"></a>  <span class="at">create_base_dir    =</span> <span class="cn">TRUE</span></span>
+<span id="cb16-15"><a href="#cb16-15" tabindex="-1"></a>)</span></code></pre></div>
+<p>Add units for cleaner plot labels, and enable time-series and rate
+calculations:</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a>desc <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">run_descriptive_stats</span>(</span>
+<span id="cb17-2"><a href="#cb17-2" tabindex="-1"></a>  <span class="at">data               =</span> df,</span>
+<span id="cb17-3"><a href="#cb17-3" tabindex="-1"></a>  <span class="at">output_path        =</span> <span class="st">&quot;path/to/output/folder&quot;</span>,</span>
+<span id="cb17-4"><a href="#cb17-4" tabindex="-1"></a>  <span class="at">aggregation_column =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb17-5"><a href="#cb17-5" tabindex="-1"></a>  <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb17-6"><a href="#cb17-6" tabindex="-1"></a>  <span class="at">dependent_col      =</span> <span class="st">&quot;deaths&quot;</span>,</span>
+<span id="cb17-7"><a href="#cb17-7" tabindex="-1"></a>  <span class="at">independent_cols   =</span> <span class="fu">c</span>(<span class="st">&quot;tmean&quot;</span>, <span class="st">&quot;humidity&quot;</span>, <span class="st">&quot;rainfall&quot;</span>),</span>
+<span id="cb17-8"><a href="#cb17-8" tabindex="-1"></a>  <span class="at">units =</span> <span class="fu">c</span>(</span>
+<span id="cb17-9"><a href="#cb17-9" tabindex="-1"></a>    <span class="at">deaths    =</span> <span class="st">&quot;count&quot;</span>,</span>
+<span id="cb17-10"><a href="#cb17-10" tabindex="-1"></a>    <span class="at">tmean     =</span> <span class="st">&quot;C&quot;</span>,</span>
+<span id="cb17-11"><a href="#cb17-11" tabindex="-1"></a>    <span class="at">humidity  =</span> <span class="st">&quot;%&quot;</span>,</span>
+<span id="cb17-12"><a href="#cb17-12" tabindex="-1"></a>    <span class="at">rainfall  =</span> <span class="st">&quot;mm&quot;</span></span>
+<span id="cb17-13"><a href="#cb17-13" tabindex="-1"></a>  ),</span>
+<span id="cb17-14"><a href="#cb17-14" tabindex="-1"></a>  <span class="at">timeseries_col     =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb17-15"><a href="#cb17-15" tabindex="-1"></a>  <span class="at">plot_corr_matrix   =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb17-16"><a href="#cb17-16" tabindex="-1"></a>  <span class="at">plot_dist          =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb17-17"><a href="#cb17-17" tabindex="-1"></a>  <span class="at">plot_ma            =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb17-18"><a href="#cb17-18" tabindex="-1"></a>  <span class="at">ma_days            =</span> <span class="dv">30</span>,</span>
+<span id="cb17-19"><a href="#cb17-19" tabindex="-1"></a>  <span class="at">plot_seasonal      =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb17-20"><a href="#cb17-20" tabindex="-1"></a>  <span class="at">plot_regional      =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb17-21"><a href="#cb17-21" tabindex="-1"></a>  <span class="at">plot_total         =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb17-22"><a href="#cb17-22" tabindex="-1"></a>  <span class="at">detect_outliers    =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb17-23"><a href="#cb17-23" tabindex="-1"></a>  <span class="at">calculate_rate     =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb17-24"><a href="#cb17-24" tabindex="-1"></a>  <span class="at">create_base_dir    =</span> <span class="cn">TRUE</span></span>
+<span id="cb17-25"><a href="#cb17-25" tabindex="-1"></a>)</span></code></pre></div>
+<p>The returned list includes paths to all generated plots:</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a>desc<span class="sc">$</span>run_output_path      <span class="co"># folder where all outputs were saved</span></span>
+<span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a>desc<span class="sc">$</span>region_output_paths  <span class="co"># per-region output sub-folders</span></span></code></pre></div>
+<hr />
+</div>
+<div id="saving-outputs" class="section level2">
+<h2>Saving outputs</h2>
+<p>Every indicator function accepts <code>save_fig</code> and
+<code>save_csv</code> arguments (or <code>save_outputs</code> for air
+pollution). Set these to <code>TRUE</code> and supply
+<code>output_folder_path</code> to write results to disk. The function
+creates a timestamped sub-folder automatically.</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" tabindex="-1"></a>res <span class="ot">&lt;-</span> climatehealth<span class="sc">::</span><span class="fu">temp_mortality_do_analysis</span>(</span>
+<span id="cb19-2"><a href="#cb19-2" tabindex="-1"></a>  <span class="at">data_path          =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb19-3"><a href="#cb19-3" tabindex="-1"></a>  <span class="at">date_col           =</span> <span class="st">&quot;date&quot;</span>,</span>
+<span id="cb19-4"><a href="#cb19-4" tabindex="-1"></a>  <span class="at">region_col         =</span> <span class="st">&quot;region&quot;</span>,</span>
+<span id="cb19-5"><a href="#cb19-5" tabindex="-1"></a>  <span class="at">temperature_col    =</span> <span class="st">&quot;tmean&quot;</span>,</span>
+<span id="cb19-6"><a href="#cb19-6" tabindex="-1"></a>  <span class="at">health_outcome_col =</span> <span class="st">&quot;deaths&quot;</span>,</span>
+<span id="cb19-7"><a href="#cb19-7" tabindex="-1"></a>  <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span>,</span>
+<span id="cb19-8"><a href="#cb19-8" tabindex="-1"></a>  <span class="at">meta_analysis      =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb19-9"><a href="#cb19-9" tabindex="-1"></a>  <span class="at">save_fig           =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb19-10"><a href="#cb19-10" tabindex="-1"></a>  <span class="at">save_csv           =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb19-11"><a href="#cb19-11" tabindex="-1"></a>  <span class="at">output_folder_path =</span> <span class="st">&quot;path/to/output/folder&quot;</span></span>
+<span id="cb19-12"><a href="#cb19-12" tabindex="-1"></a>)</span></code></pre></div>
+<hr />
+</div>
+<div id="error-handling" class="section level2">
+<h2>Error handling</h2>
+<p>The package uses structured conditions. You can catch them with
+<code>tryCatch</code>:</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" tabindex="-1"></a>result <span class="ot">&lt;-</span> <span class="fu">tryCatch</span>(</span>
+<span id="cb20-2"><a href="#cb20-2" tabindex="-1"></a>  climatehealth<span class="sc">::</span><span class="fu">temp_mortality_do_analysis</span>(</span>
+<span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a>    <span class="at">data_path          =</span> <span class="st">&quot;path/to/your/data.csv&quot;</span>,</span>
+<span id="cb20-4"><a href="#cb20-4" tabindex="-1"></a>    <span class="at">date_col           =</span> <span class="st">&quot;wrong_column_name&quot;</span>,</span>
+<span id="cb20-5"><a href="#cb20-5" tabindex="-1"></a>    <span class="at">health_outcome_col =</span> <span class="st">&quot;deaths&quot;</span>,</span>
+<span id="cb20-6"><a href="#cb20-6" tabindex="-1"></a>    <span class="at">population_col     =</span> <span class="st">&quot;population&quot;</span></span>
+<span id="cb20-7"><a href="#cb20-7" tabindex="-1"></a>  ),</span>
+<span id="cb20-8"><a href="#cb20-8" tabindex="-1"></a>  <span class="at">climate_error =</span> <span class="cf">function</span>(e) {</span>
+<span id="cb20-9"><a href="#cb20-9" tabindex="-1"></a>    <span class="fu">message</span>(<span class="st">&quot;climatehealth error: &quot;</span>, <span class="fu">conditionMessage</span>(e))</span>
+<span id="cb20-10"><a href="#cb20-10" tabindex="-1"></a>    <span class="cn">NULL</span></span>
+<span id="cb20-11"><a href="#cb20-11" tabindex="-1"></a>  }</span>
+<span id="cb20-12"><a href="#cb20-12" tabindex="-1"></a>)</span></code></pre></div>
+<p>Use <code>is_climate_error()</code> to test whether a caught
+condition came from this package:</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a>climatehealth<span class="sc">::</span><span class="fu">is_climate_error</span>(e)</span></code></pre></div>
+<hr />
+</div>
+<div id="next-steps" class="section level2">
+<h2>Next steps</h2>
+<ul>
+<li><strong>Full example scripts</strong> for each indicator are in
+<code>system.file(&quot;examples&quot;, package = &quot;climatehealth&quot;)</code>.</li>
+<li><strong>Function reference</strong>: see
+<code>?temp_mortality_do_analysis</code> and related help pages.</li>
+<li><strong>Methodology documents</strong> for each SOSCHI topic are
+linked from the <a href="https://climate-health.officialstatistics.org">SOSCHI project
+website</a>.</li>
+<li><strong>Report issues</strong> by emailing <a href="mailto:climate.health@ons.gov.uk" class="email">climate.health@ons.gov.uk</a> or via the <a href="https://climate-health.officialstatistics.org">Contact Us
+page</a>.</li>
+</ul>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

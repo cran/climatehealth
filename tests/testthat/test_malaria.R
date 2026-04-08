@@ -89,6 +89,7 @@ mock_min_data <- tibble(
 test_that("malaria_do_analysis runs end-to-end on synthetic data", {
   skip_if_not_installed("sf")
   skip_if_not_installed("INLA")
+  skip_on_cran()
   skip_on_ci()
 
   health  <- make_health_fixture_m()
@@ -99,7 +100,7 @@ test_that("malaria_do_analysis runs end-to-end on synthetic data", {
   map_path <- paste0(map_stub, ".shp")
   on.exit(unlink(Sys.glob(paste0(map_stub, ".*"))), add = TRUE)
   map_m <- make_synthetic_map_m() |> sf::st_transform(3857)
-  sf::st_write(map_m, map_path, quiet = TRUE, delete_dsn = TRUE)
+  sf::st_write(map_m, map_path, quiet = TRUE, append = FALSE)
 
   res <- suppress_plot(suppressWarnings(
     malaria_do_analysis(

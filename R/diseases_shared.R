@@ -848,9 +848,28 @@ run_inla_models <- function(combined_data,
     )
   }
 
+  resolve_inla_thread_limit <- function() {
+    thread_limit <- getOption("climatehealth.inla_num_threads", NULL)
+    if (!is.null(thread_limit)) {
+      thread_limit <- suppressWarnings(as.integer(thread_limit[[1]]))
+      if (is.na(thread_limit) || thread_limit < 1L) {
+        stop("Option 'climatehealth.inla_num_threads' must be a positive integer.")
+      }
+      return(thread_limit)
+    }
+
+    limit_cores <- tolower(Sys.getenv("_R_CHECK_LIMIT_CORES_", "")) %in% c("true", "t", "1")
+    if (limit_cores) {
+      return(1L)
+    }
+
+    NULL
+  }
+
   data <- create_inla_indices(combined_data$data, case_type)
   basis <- set_cross_basis(combined_data$data,max_lag,nk)
   graph_file <- combined_data$graph_file
+  thread_limit <- resolve_inla_thread_limit()
 
   prior <- list(prec = list(prior = "pc.prec", param = c(0.5 / 0.31, 0.01)))
   ct_sym <- as.name(case_type)
@@ -881,14 +900,33 @@ run_inla_models <- function(combined_data,
     cfam <- list(hyper = list(theta = list(prior = "loggamma", param = c(1, 0.01))))
   }
 
-  fit <- function(f) INLA::inla.rerun(INLA::inla(
-    f,data = data,family = family,offset = log(data$E),
-    control.family = cfam, control.inla = list(strategy = "adaptive"),
-    control.compute = list(dic = TRUE, config = config,
-                           cpo = TRUE, return.marginals = FALSE),
-    control.fixed = list(correlation.matrix = TRUE, prec.intercept = 1, prec = 1),
-    control.predictor = list(link = 1, compute = TRUE),verbose = FALSE
-  ))
+  fit <- function(f) {
+    inla_args <- list(
+      formula = f,
+      data = data,
+      family = family,
+      offset = log(data$E),
+      control.family = cfam,
+      control.inla = list(strategy = "adaptive"),
+      control.compute = list(dic = TRUE, config = config,
+                             cpo = TRUE, return.marginals = FALSE),
+      control.fixed = list(correlation.matrix = TRUE, prec.intercept = 1, prec = 1),
+      control.predictor = list(link = 1, compute = TRUE),
+      verbose = FALSE
+    )
+
+    if (!is.null(thread_limit)) {
+      inla_args$num.threads <- thread_limit
+      # Older INLA builds do not expose blas.num.threads, so set it only when available.
+      if ("blas.num.threads" %in% names(formals(INLA::inla))) {
+        inla_args$blas.num.threads <- thread_limit
+      }
+    }
+
+    model <- do.call(INLA::inla, inla_args)
+
+    INLA::inla.rerun(model)
+  }
 
   baseline_model <- fit(base_formula)
   model <- fit(full_formula)

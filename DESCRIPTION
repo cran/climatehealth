@@ -1,7 +1,7 @@
 Package: climatehealth
 Title: Statistical Tools for Modelling Climate-Health Impacts
-Version: 1.0.0
-Date: 2026-03-26
+Version: 1.0.1
+Date: 2026-04-08
 Authors@R: 
     c(
       person("Charlie", "Browning", role = "aut"),
@@ -73,7 +73,7 @@ Additional_repositories: https://inla.r-inla-download.org/R/stable/
 Depends: R (>= 4.4.0)
 Config/rcmdcheck/ignore-inconsequential-notes: true
 NeedsCompilation: no
-Packaged: 2026-03-26 10:24:16 UTC; omekek
+Packaged: 2026-04-08 16:53:32 UTC; omekek
 Author: Charlie Browning [aut],
   Kenechi Omeke [aut, cre],
   Etse Yawo Dzakpa [aut],
@@ -101,4 +101,4 @@ Author: Charlie Browning [aut],
   Office for National Statistics [cph] (SOSCHI Project)
 Maintainer: Kenechi Omeke <climate.health@ons.gov.uk>
 Repository: CRAN
-Date/Publication: 2026-03-30 18:50:02 UTC
+Date/Publication: 2026-04-08 20:30:02 UTC

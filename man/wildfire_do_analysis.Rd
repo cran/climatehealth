@@ -2,8 +2,7 @@
 % Please edit documentation in R/wildfire.R
 \name{wildfire_do_analysis}
 \alias{wildfire_do_analysis}
-\title{This is full analysis pipeline to analyse the impact of wildfire-related PM2.5 on a health
-outcome.}
+\title{Full analysis for the 'mortality attributable to wildfire-related PM2.5' indicator}
 \usage{
 wildfire_do_analysis(
   health_path,
@@ -21,17 +20,28 @@ wildfire_do_analysis(
   pm_2_5_col = NULL,
   wildfire_lag = 3,
   temperature_lag = 1,
-  spline_temperature_lag = 0,
   spline_temperature_degrees_freedom = 6,
   predictors_vif = NULL,
-  calc_relative_risk_by_region = FALSE,
+  calculate_by_region = FALSE,
   scale_factor_wildfire_pm = 10,
   save_fig = FALSE,
   save_csv = FALSE,
   output_folder_path = NULL,
   create_run_subdir = FALSE,
   print_vif = FALSE,
-  print_model_summaries = FALSE
+  print_model_summaries = FALSE,
+  run_descriptive = FALSE,
+  plot_corr_matrix = TRUE,
+  correlation_method = "pearson",
+  plot_dist = TRUE,
+  plot_na_counts = TRUE,
+  plot_scatter = TRUE,
+  plot_box = TRUE,
+  plot_seasonal = TRUE,
+  plot_regional = TRUE,
+  plot_total = TRUE,
+  detect_outliers = TRUE,
+  calculate_rate = FALSE
 )
 }
 \arguments{
@@ -86,17 +96,13 @@ lags for wildfire PM2.5. Default is 3.}
 \item{temperature_lag}{Integer. The number of days for which to calculate
 the lags for temperature. Default is 1.}
 
-\item{spline_temperature_lag}{Integer. The number of days of lag in the
-temperature variable from which to generate splines. Default is 0 (unlagged
-temperature variable).}
-
 \item{spline_temperature_degrees_freedom}{Integer. Degrees of freedom for the
 spline(s).}
 
 \item{predictors_vif}{Character vector with each of the predictors to
 include in the model. Must contain at least 2 variables. Defaults to NULL.}
 
-\item{calc_relative_risk_by_region}{Bool. Whether to calculate Relative Risk by region.
+\item{calculate_by_region}{Bool. Whether to calculate Relative Risk by region.
 Default: FALSE}
 
 \item{scale_factor_wildfire_pm}{Numeric. The value to divide the wildfire
@@ -121,6 +127,35 @@ for each predictor. Defaults to FALSE.}
 
 \item{print_model_summaries}{Bool. Whether to print the model summaries to
 console. Defaults to FALSE.}
+
+\item{run_descriptive}{Logical. Whether to run descriptive statistics. Default FALSE.}
+
+\item{plot_corr_matrix}{Logical. Plot correlation matrix. Default TRUE.}
+
+\item{correlation_method}{Character. Correlation method for corr matrix
+(e.g.,"pearson", "spearman"). Default "pearson".}
+
+\item{plot_dist}{Logical. Plot distributions (hist/density) for key variables.
+Default TRUE.}
+
+\item{plot_na_counts}{Logical. Plot missingness/NA counts. Default TRUE.}
+
+\item{plot_scatter}{Logical. Plot scatter plots for key pairs. Default TRUE.}
+
+\item{plot_box}{Logical. Plot boxplots by region/season where applicable.
+Default TRUE.}
+
+\item{plot_seasonal}{Logical. Plot seasonal summaries. Default TRUE.}
+
+\item{plot_regional}{Logical. Plot regional summaries. Default TRUE.}
+
+\item{plot_total}{Logical. Plot overall totals where relevant. Default TRUE.}
+
+\item{detect_outliers}{Logical. Flag potential outliers in descriptive workflow.
+Default TRUE.}
+
+\item{calculate_rate}{Logical. Whether to calculate rate variables during
+descriptive stats (e.g., deaths per population). Default FALSE}
 }
 \value{
 \itemize{
@@ -193,18 +228,17 @@ health_outcome_col = "death",
 population_col = "population",
 rh_col = NULL,
 wind_speed_col = NULL,
-pm_2_5_col = " mean_PM ",
+pm_2_5_col = "mean_PM",
 wildfire_lag = 3,
 temperature_lag = 1,
-spline_temperature_lag = 0,
-spline_temperature_degrees_freedom = 4,
+spline_temperature_degrees_freedom = 6,
 predictors_vif = NULL,
-calc_relative_risk_by_region = FALSE,
+calculate_by_region = TRUE,
 scale_factor_wildfire_pm = 10,
-save_fig = FALSE,
-save_csv = FALSE,
+save_fig = TRUE,
+save_csv = TRUE,
 output_folder_path = tempdir(),
-create_run_subdir = FALSE,
+create_run_subdir = TRUE,
 print_vif = FALSE,
 print_model_summaries = FALSE)
 }

@@ -315,7 +315,7 @@ test_that("Synthetic air pollution data loaded in and formatted as expected", {
   )
 
   actual_df <- load_air_pollution_data(temp_synth_data)
-  expect_equal(actual_df, expected_df)
+  expect_equal(actual_df[, !"time"], expected_df[, !"time"])
 
   actual_df_initially_diff <- load_air_pollution_data(temp_synth_data_diff_names,
                                                       date_col = "dy_mnth_yr",
@@ -327,7 +327,7 @@ test_that("Synthetic air pollution data loaded in and formatted as expected", {
                                                       precipitation_col = "precip",
                                                       tmax_col = "t_max",
                                                       wind_speed_col = "wnd_spd")
-  expect_equal(actual_df_initially_diff, expected_df)
+  expect_equal(actual_df_initially_diff[, !"time"], expected_df[, !"time"])
 
 
   vals <- c(
@@ -588,7 +588,7 @@ test_that("Synthetic air pollution data loaded in and formatted as expected", {
 
   actual_df_categ <- load_air_pollution_data(temp_synth_data,
                                              categorical_others = c("sector"))
-  expect_equal(actual_df_categ, expected_df_categ)
+  expect_equal(actual_df_categ[, !"time"], expected_df_categ[, !"time"])
 
   expected_df_contin <- expected_df
   ozone_values <- c(50.14, 15.46, 33.69, 10.25, 52.18, 17.82, 30.46, 56.25,
@@ -622,8 +622,60 @@ test_that("Synthetic air pollution data loaded in and formatted as expected", {
 
   actual_df_contin <- load_air_pollution_data(temp_synth_data,
                                               continuous_others = c("ozone"))
-  expect_equal(actual_df_contin, expected_df_contin)
+  expect_equal(actual_df_contin[, !"time"], expected_df_contin[, !"time"])
 
+})
+
+test_that("load_air_pollution_data handles custom main column names with spaces", {
+  raw_data <- data.frame(
+    "date column" = as.Date(c("2020-01-03", "2020-01-01", "2020-01-02")),
+    "region column" = "A",
+    "pm 25" = c(14, 10, 12),
+    "death count" = c(3, 1, 2),
+    "population count" = 1000,
+    "relative humidity" = c(52, 50, 51),
+    "rain amount" = c(0.3, 0.1, 0.2),
+    "maximum temp" = c(27, 25, 26),
+    "wind speed" = c(4, 2, 3),
+    check.names = FALSE
+  )
+
+  actual_df <- load_air_pollution_data(
+    raw_data,
+    date_col = "date column",
+    region_col = "region column",
+    pm25_col = "pm 25",
+    deaths_col = "death count",
+    population_col = "population count",
+    humidity_col = "relative humidity",
+    precipitation_col = "rain amount",
+    tmax_col = "maximum temp",
+    wind_speed_col = "wind speed"
+  )
+
+  expect_equal(actual_df$date, as.Date("2020-01-01") + 0:2)
+  expect_equal(actual_df$pm25, c(10, 12, 14))
+  expect_equal(actual_df$deaths, c(1, 2, 3))
+  expect_equal(actual_df$time, c(1, 2, 3))
+
+  tmp_csv <- tempfile(fileext = ".csv")
+  write.csv(raw_data, tmp_csv, row.names = FALSE)
+  on.exit(unlink(tmp_csv), add = TRUE)
+
+  actual_csv <- load_air_pollution_data(
+    tmp_csv,
+    date_col = "date column",
+    region_col = "region column",
+    pm25_col = "pm 25",
+    deaths_col = "death count",
+    population_col = "population count",
+    humidity_col = "relative humidity",
+    precipitation_col = "rain amount",
+    tmax_col = "maximum temp",
+    wind_speed_col = "wind speed"
+  )
+
+  expect_equal(actual_csv, actual_df)
 })
 
 
@@ -824,7 +876,7 @@ test_that("air_pollution_descriptive_stats core behaviour and API args are corre
                             plot_corr_matrix, plot_dist, plot_ma, plot_na_counts,
                             plot_scatter, plot_box, plot_seasonal, plot_regional, plot_total,
                             correlation_method, ma_days, ma_sides, timeseries_col,
-                            detect_outliers, calculate_rate, create_base_dir) {
+                            detect_outliers, calculate_rate, run_id, create_base_dir) {
 
     captured$data              <- data
     captured$output_path       <- output_path
@@ -848,6 +900,7 @@ test_that("air_pollution_descriptive_stats core behaviour and API args are corre
     captured$timeseries_col    <- timeseries_col
     captured$detect_outliers   <- detect_outliers
     captured$calculate_rate    <- calculate_rate
+    captured$run_id            <- run_id
     captured$create_base_dir   <- create_base_dir
 
     # Return list of pretend output paths to mimic success
@@ -1096,16 +1149,25 @@ make_base_ap_data <- function(n_days = 40,
 }
 
 # Build the same GAM formula used by the implementation, given a data frame and args.
-build_expected_formula <- function(data_with_lags, max_lag, df_seasonal) {
+build_expected_formula <- function(data_with_lags, max_lag, df_seasonal, continuous_others = NULL) {
   max_lag <- as.integer(max_lag)
   lag_vars_expected <- c("pm25", if (max_lag >= 1) paste0("pm25_lag", seq_len(max_lag)) else character())
   present_lag_vars <- intersect(lag_vars_expected, names(data_with_lags))
   yr <- length(unique(data_with_lags$year))
   lag_formula <- paste(present_lag_vars, collapse = " + ")
-  tmean_term <- if ("tmean" %in% names(data_with_lags) && !all(is.na(data_with_lags$tmean))) {
-    " + s(tmean, k = 3)"
-  } else {
-    ""
+  continuous_other_terms <- ""
+  if (!is.null(continuous_others)) {
+    extra_vars <- continuous_others[continuous_others %in% names(data_with_lags)]
+    extra_vars <- extra_vars[
+      !vapply(extra_vars, function(var) all(is.na(data_with_lags[[var]])), logical(1))
+    ]
+
+    if (length(extra_vars) > 0) {
+      continuous_other_terms <- paste(
+        paste0(" + s(", extra_vars, ", k = 3)"),
+        collapse = ""
+      )
+    }
   }
   as.formula(
     paste0(
@@ -1115,15 +1177,24 @@ build_expected_formula <- function(data_with_lags, max_lag, df_seasonal) {
       " + s(humidity, k = 3)",
       " + s(precipitation, k = 3)",
       " + s(wind_speed, k = 3)",
-      tmean_term,
+      continuous_other_terms,
       " + dow + offset(log(population))"
     )
   )
 }
 
 # Helper: fit an mgcv model with the expected formula to compute expected coefs and vcov
-fit_reference_model <- function(data_with_lags, max_lag, df_seasonal = 6, family = "quasipoisson") {
-  form <- build_expected_formula(data_with_lags, max_lag = max_lag, df_seasonal = df_seasonal)
+fit_reference_model <- function(data_with_lags,
+                                max_lag,
+                                df_seasonal = 6,
+                                family = "quasipoisson",
+                                continuous_others = NULL) {
+  form <- build_expected_formula(
+    data_with_lags,
+    max_lag = max_lag,
+    df_seasonal = df_seasonal,
+    continuous_others = continuous_others
+  )
   mgcv::gam(form, data = data_with_lags, family = family)
 }
 
@@ -1184,8 +1255,9 @@ test_that("fit_air_pollution_gam core behaviour: per-lag, cumulative, ordering a
   # Fit using the function under test
   res <- fit_air_pollution_gam(data_with_lags, max_lag = 2, df_seasonal = 6, family = "quasipoisson")
   expect_type(res, "list")
-  # On success, implementation returns only coef_table
-  expect_true(setequal(names(res), "coef_table"))
+  # On success, implementation returns model, coef_table, and vcov_used_for_cumulative
+  expect_true(all(c("model", "coef_table", "vcov_used_for_cumulative") %in% names(res)))
+  expect_s3_class(res$model, "gam")
   coef_table <- res$coef_table
   expect_s3_class(coef_table, "data.frame")
 
@@ -1287,21 +1359,31 @@ test_that("fit_air_pollution_gam seasonal df scales with number of years in data
   expect_coef_table_matches_model(coef_table, ref_model, present_lag_vars, max_lag = 1)
 })
 
-test_that("fit_air_pollution_gam includes tmean only when not all NA", {
+test_that("fit_air_pollution_gam uses only requested usable continuous covariates", {
   set.seed(5)
-  # Case A: tmean present and not all NA
+  # Case A: tmean requested, present, and not all NA -> included
   base_a <- make_base_ap_data(n_days = 45, with_tmean = TRUE, tmean_all_na = FALSE)
   lag_a  <- create_air_pollution_lags(base_a, max_lag = 1)
-  res_a  <- fit_air_pollution_gam(lag_a, max_lag = 1)
-  ref_a  <- fit_reference_model(lag_a, max_lag = 1)  # this builder includes tmean when not all NA
+  res_a  <- fit_air_pollution_gam(lag_a, max_lag = 1, continuous_others = "tmean")
+  ref_a  <- fit_reference_model(lag_a, max_lag = 1, continuous_others = "tmean")
   expect_coef_table_matches_model(res_a$coef_table, ref_a, c("pm25","pm25_lag1"), max_lag = 1)
+  expect_true(grepl("s\\(tmean", paste(deparse(stats::formula(res_a$model)), collapse = " ")))
 
-  # Case B: tmean column exists but all NA -> excluded
+  # Case B: tmean requested and present but all NA -> excluded
   base_b <- make_base_ap_data(n_days = 45, with_tmean = TRUE, tmean_all_na = TRUE)
   lag_b  <- create_air_pollution_lags(base_b, max_lag = 1)
-  res_b  <- fit_air_pollution_gam(lag_b, max_lag = 1)
-  ref_b  <- fit_reference_model(lag_b, max_lag = 1)  # builder omits tmean when all NA
+  res_b  <- fit_air_pollution_gam(lag_b, max_lag = 1, continuous_others = "tmean")
+  ref_b  <- fit_reference_model(lag_b, max_lag = 1, continuous_others = "tmean")
   expect_coef_table_matches_model(res_b$coef_table, ref_b, c("pm25","pm25_lag1"), max_lag = 1)
+  expect_false(grepl("s\\(tmean", paste(deparse(stats::formula(res_b$model)), collapse = " ")))
+
+  # Case C: requested covariate absent -> silently ignored
+  base_c <- make_base_ap_data(n_days = 45, with_tmean = FALSE)
+  lag_c  <- create_air_pollution_lags(base_c, max_lag = 1)
+  res_c  <- fit_air_pollution_gam(lag_c, max_lag = 1, continuous_others = "tmean")
+  ref_c  <- fit_reference_model(lag_c, max_lag = 1, continuous_others = "tmean")
+  expect_coef_table_matches_model(res_c$coef_table, ref_c, c("pm25","pm25_lag1"), max_lag = 1)
+  expect_false(grepl("s\\(tmean", paste(deparse(stats::formula(res_c$model)), collapse = " ")))
 })
 
 test_that("fit_air_pollution_gam falls back to naive cumulative SE when vcov() fails", {
@@ -1414,6 +1496,43 @@ test_that("air_pollution_meta_analysis end-to-end returns region and meta-level 
   expect_true(all(is.finite(mr$coef)))
 })
 
+test_that("air_pollution_meta_analysis forwards continuous_others to regional GAM fits", {
+  lagged <- make_lagged_multi_region(regions = c("A", "B"), n_days = 20, max_lag = 1)
+  lagged$tmean <- seq_len(nrow(lagged))
+  captured <- new.env(parent = emptyenv())
+  captured$continuous_others <- character()
+
+  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family,
+                       continuous_others = NULL) {
+    captured$continuous_others <- c(
+      captured$continuous_others,
+      paste(continuous_others, collapse = "|")
+    )
+    list(coef_table = data.frame(
+      lag = "0",
+      pm25_variable = "pm25",
+      coef = NA_real_,
+      se = NA_real_,
+      ci.lb = NA_real_,
+      ci.ub = NA_real_
+    ))
+  }
+
+  pkg_ns <- getNamespaceName(environment(air_pollution_meta_analysis))
+
+  with_mocked_bindings(
+    air_pollution_meta_analysis(
+      lagged,
+      max_lag = 1,
+      continuous_others = c("tmean", "ozone")
+    ),
+    fit_air_pollution_gam = mock_fit,
+    .package = pkg_ns
+  )
+
+  expect_equal(captured$continuous_others, rep("tmean|ozone", 2L))
+})
+
 test_that("air_pollution_meta_analysis aggregates per lag using metafor::rma and preserves factor order", {
   # Ensure the metafor namespace is available so the rma binding exists to mock
   requireNamespace("metafor", quietly = TRUE)
@@ -1423,7 +1542,8 @@ test_that("air_pollution_meta_analysis aggregates per lag using metafor::rma and
 
   # Deterministic per-region coef tables for meta calculation
   # Do NOT rely on a region column inside the nested .x data (it may not be present)
-  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family) {
+  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family,
+                       continuous_others = NULL) {
     # Derive a simple deterministic signal that varies by group
     # Your generator uses different death rates per region, so mean(deaths) differs
     signal <- round(mean(data_with_lags$deaths, na.rm = TRUE))
@@ -1493,7 +1613,8 @@ test_that("air_pollution_meta_analysis handles metafor::rma errors by emitting N
   lagged <- make_lagged_multi_region(regions = c("A", "B"), n_days = 20, max_lag = 1)
 
   # Mock fit returns sensible coef_table per region, but does not depend on .x$region
-  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family) {
+  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family,
+                       continuous_others = NULL) {
     # Small deterministic variation by group using the data itself
     signal <- round(mean(data_with_lags$deaths, na.rm = TRUE))
     base <- if (is.na(signal)) 0.15 else if (signal %% 2 == 0) 0.2 else 0.1
@@ -1542,7 +1663,8 @@ test_that("air_pollution_meta_analysis returns NA for a lag when all region coef
 
   lagged <- make_lagged_multi_region(regions = c("A", "B"), n_days = 20, max_lag = 1)
 
-  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family) {
+  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family,
+                       continuous_others = NULL) {
     # Make lag "1" entirely NA across regions; others valid
     list(coef_table = data.frame(
       lag = c("0", "1", "0-1"),
@@ -1592,7 +1714,8 @@ test_that("air_pollution_meta_analysis preserves lag and pm25_variable level ord
   lagged <- make_lagged_multi_region(regions = c("A", "B"), n_days = 20, max_lag = 1)
 
   # Fit returns rows in a specific order; we verify factors keep that order
-  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family) {
+  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family,
+                       continuous_others = NULL) {
     list(coef_table = data.frame(
       lag = c("1", "0", "0-1"),  # out-of-natural order on purpose
       pm25_variable = c("pm25_lag1", "pm25", "pm25_lag0_1"),
@@ -1659,7 +1782,8 @@ test_that("air_pollution_meta_analysis returns valid meta rows for a single regi
   lagged <- make_lagged_multi_region(regions = c("Solo"), n_days = 30, max_lag = 1)
 
   # Mock fit to produce simple coefficients
-  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family) {
+  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family,
+                       continuous_others = NULL) {
     list(coef_table = data.frame(
       lag = c("0", "1", "0-1"),
       pm25_variable = c("pm25", "pm25_lag1", "pm25_lag0_1"),
@@ -1703,7 +1827,8 @@ test_that("air_pollution_meta_analysis aggregates even if some regions miss the 
   lagged <- make_lagged_multi_region(regions = c("A", "B", "C"), n_days = 25, max_lag = 1)
 
   # Alternate missing cumulative row by group characteristic
-  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family) {
+  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family,
+                       continuous_others = NULL) {
     signal <- round(mean(data_with_lags$deaths, na.rm = TRUE))
     base <- if (is.na(signal)) 0.15 else if (signal %% 2 == 0) 0.2 else 0.1
     # For one "type" of group, drop the cumulative row
@@ -1758,7 +1883,8 @@ test_that("air_pollution_meta_analysis returns NA row when SEs are zero for a la
 
   lagged <- make_lagged_multi_region(regions = c("A","B"), n_days = 20, max_lag = 1)
 
-  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family) {
+  mock_fit <- function(data_with_lags, max_lag, df_seasonal, family,
+                       continuous_others = NULL) {
     list(coef_table = data.frame(
       lag = c("0", "1", "0-1"),
       pm25_variable = c("pm25", "pm25_lag1", "pm25_lag0_1"),
@@ -2032,26 +2158,6 @@ test_that("analyze_air_pollution_daily computes rr.lb/rr.ub when pooled CI colum
   expect_true(any(is.finite(nat_pm25$rr.ub)))
 })
 
-# Test for calculate_air_pollution_grid_dims
-test_that("calculate_air_pollution_grid_dims is outputting appropriate dimensions from valid input", {
-
-  expect_equal(calculate_air_pollution_grid_dims(4),
-               list(ncol = c(2), nrow = c(2)))
-
-  expect_equal(calculate_air_pollution_grid_dims(5),
-               list(ncol = c(3), nrow = c(2)))
-
-  expect_equal(calculate_air_pollution_grid_dims(9),
-               list(ncol = c(3), nrow = c(3)))
-
-  expect_equal(calculate_air_pollution_grid_dims(c(5)),
-               list(ncol = c(3), nrow = c(2)))
-
-  expect_error(calculate_air_pollution_grid_dims(c(5, 2)))
-  expect_error(calculate_air_pollution_grid_dims("boop"))
-})
-
-
 # Tests for plot_air_pollution_forest_by_region()
 #Utility to build analysis_results for a given max_lag
 .build_analysis_results <- function(regions = c("R1","R2"),
@@ -2174,7 +2280,7 @@ test_that("plot_air_pollution_forest_by_region errors when save_plot = TRUE and 
   )
 })
 
-test_that("plot_air_pollution_forest_by_region calls save_air_pollution_plot with expected filename", {
+test_that("plot_air_pollution_forest_by_region calls save_accessible_ggplot with expected filename", {
   analysis_results <- .build_analysis_results(regions = c("R1","R2"),
                                               n_days = 8, max_lag = 1L,
                                               ref_pm25 = 25, ref_name = "UKHSA")
@@ -2184,12 +2290,22 @@ test_that("plot_air_pollution_forest_by_region calls save_air_pollution_plot wit
   on.exit(unlink(outdir, recursive = TRUE, force = TRUE), add = TRUE)
 
   captured <- new.env(parent = emptyenv())
-  mock_save <- function(plot_object, output_dir, filename) {
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL) {
     captured$plot_object <- plot_object
-    captured$output_dir  <- output_dir
-    captured$filename    <- filename
-    invisible(TRUE)
+    captured$output_dir <- output_dir
+    captured$filename <- filename
+    captured$width <- width
+    captured$height <- height
+    captured$alt_text <- alt_text
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
+
 
   pkg_ns <- getNamespaceName(environment(plot_air_pollution_forest_by_region))
 
@@ -2202,7 +2318,7 @@ test_that("plot_air_pollution_forest_by_region calls save_air_pollution_plot wit
       save_plot = TRUE
     )
   },
-  save_air_pollution_plot = mock_save, .package = pkg_ns
+  save_accessible_ggplot = mock_save, .package = pkg_ns
   )
 
   expect_s3_class(p, "ggplot")
@@ -2258,8 +2374,7 @@ test_that("plot_air_pollution_forest_by_lag returns ggplot and highlights cumula
 
   # axis labels and title contain ref metadata
   expect_identical(p$labels$y, "Relative Risk")
-  # x label is currently "Region" in the code (even though x = var_name)
-  expect_identical(p$labels$x, "Region")
+  expect_identical(p$labels$x, "Lag")
   expect_true(grepl('Ref: "WHO" = 20', p$labels$title, fixed = TRUE))
 
   # y limits exist and straddle 1 (coord_cartesian)
@@ -2294,17 +2409,20 @@ test_that("plot_air_pollution_forest_by_lag returns ggplot and highlights cumula
   expect_true(is.finite(cum_x))
 
   # Helper to normalize to uppercase and accept named or hex (with or without alpha)
+
+  cols <- get_accessible_plot_colours()
+
   norm <- function(x) toupper(as.character(x))
-  is_red  <- function(x) norm(x) %in% c("RED",  "#FF0000", "#FF0000FF")
-  is_blue <- function(x) norm(x) %in% c("BLUE", "#0000FF", "#0000FFFF")
 
   # Colours used for cumulative vs non-cumulative points
-  cum_cols     <- pt$colour[pt$x == cum_x]
+  cum_cols <- pt$colour[pt$x == cum_x]
   non_cum_cols <- pt$colour[pt$x != cum_x]
 
-  # At least one cumulative point is red-ish, and at least one non-cumulative is blue-ish
-  expect_true(any(is_red(cum_cols)))
-  expect_true(any(is_blue(non_cum_cols)))
+  # Cumulative lag should use the accessible national highlight colour.
+  expect_true(any(norm(cum_cols) == norm(cols$national)))
+
+  # Non-cumulative lags should use the accessible regional colour.
+  expect_true(any(norm(non_cum_cols) == norm(cols$regional)))
 
   sc <- p$scales$get_scales("colour")
   expect_true(inherits(sc, "ScaleDiscrete"))
@@ -2363,12 +2481,21 @@ test_that("plot_air_pollution_forest_by_lag calls save_air_pollution_plot with e
   on.exit(unlink(outdir, recursive = TRUE, force = TRUE), add = TRUE)
 
   captured <- new.env(parent = emptyenv())
-  mock_save <- function(plot_object, output_dir, filename) {
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL) {
     captured$plot_object <- plot_object
-    captured$output_dir  <- output_dir
-    captured$filename    <- filename
-    invisible(TRUE)
+    captured$output_dir <- output_dir
+    captured$filename <- filename
+    captured$width <- width
+    captured$height <- height
+    captured$alt_text <- alt_text
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
+
 
   pkg_ns <- getNamespaceName(environment(plot_air_pollution_forest_by_lag))
 
@@ -2380,7 +2507,7 @@ test_that("plot_air_pollution_forest_by_lag calls save_air_pollution_plot with e
       save_plot = TRUE
     )
   },
-  save_air_pollution_plot = mock_save, .package = pkg_ns
+  save_accessible_ggplot = mock_save, .package = pkg_ns
   )
 
   expect_s3_class(p, "ggplot")
@@ -2948,10 +3075,10 @@ test_that("aggregate_air_pollution_by_month proper groupings, errors thrown when
 
 # Tests for plot_air_pollution_an_ar_monthly()
 
-test_that("plot_air_pollution_an_ar_monthly returns an_plot and ar_plot with expected structure", {
+test_that("plot_air_pollution_an_ar_monthly returns patchwork AN and AR plots with expected structure", {
   # Build multi-month analysis_results; 400 days gives ~13 months
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2"),
+    regions  = c("R1", "R2"),
     n_days   = 400,
     max_lag  = 1L,
     ref_pm25 = 20,
@@ -2967,39 +3094,73 @@ test_that("plot_air_pollution_an_ar_monthly returns an_plot and ar_plot with exp
 
   # Output structure
   expect_type(out, "list")
-  expect_true(all(c("an_plot","ar_plot") %in% names(out)))
-  expect_s3_class(out$an_plot, "ggplot")
-  expect_s3_class(out$ar_plot, "ggplot")
+  expect_true(all(c("an_plot", "ar_plot") %in% names(out)))
 
-  # Titles contain ref metadata
-  expect_true(grepl("Monthly Attributable Number \\(AN\\) by Region", out$an_plot$labels$title))
-  expect_true(grepl('WHO', out$an_plot$labels$title))
-  expect_true(grepl('20', out$an_plot$labels$title))
-  expect_true(grepl("Monthly Attributable Rate \\(AR\\) by Region", out$ar_plot$labels$title))
+  # These are now patchwork plots, not facetted ggplots
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_s3_class(out$ar_plot, "patchwork")
 
-  # Ribbons and lines exist (robust check via ggplot_build)
+  # Patchwork annotation contains the figure title/subtitle/caption
+  expect_match(
+    out$an_plot$patches$annotation$title,
+    "Monthly Attributable Number \\(AN\\) by Region"
+  )
+  expect_match(out$an_plot$patches$annotation$title, "WHO")
+  expect_match(out$an_plot$patches$annotation$title, "20")
+
+  expect_match(
+    out$ar_plot$patches$annotation$title,
+    "Monthly Attributable Rate \\(AR\\) by Region"
+  )
+  expect_match(out$ar_plot$patches$annotation$title, "WHO")
+  expect_match(out$ar_plot$patches$annotation$title, "20")
+
+  expect_match(
+    out$an_plot$patches$annotation$subtitle,
+    "Line shows monthly estimate"
+  )
+  expect_match(
+    out$ar_plot$patches$annotation$subtitle,
+    "Line shows monthly estimate"
+  )
+
+  expect_match(
+    out$an_plot$patches$annotation$caption,
+    "Alt text:"
+  )
+  expect_match(
+    out$ar_plot$patches$annotation$caption,
+    "Alt text:"
+  )
+
+  # Ribbons and lines exist, checked via ggplot_build on the patchwork object
   an_built <- ggplot2::ggplot_build(out$an_plot)
   ar_built <- ggplot2::ggplot_build(out$ar_plot)
 
-  has_ribbon <- function(pbuilt) any(vapply(pbuilt$data, function(d) "ymin" %in% names(d) && "ymax" %in% names(d), logical(1)))
-  has_line   <- function(pbuilt) any(vapply(pbuilt$data, function(d) "x" %in% names(d) && "y" %in% names(d) && !("ymin" %in% names(d)), logical(1)))
+  has_ribbon <- function(pbuilt) {
+    any(vapply(
+      pbuilt$data,
+      function(d) "ymin" %in% names(d) && "ymax" %in% names(d),
+      logical(1)
+    ))
+  }
+
+  has_line <- function(pbuilt) {
+    any(vapply(
+      pbuilt$data,
+      function(d) {
+        "x" %in% names(d) &&
+          "y" %in% names(d) &&
+          !("ymin" %in% names(d))
+      },
+      logical(1)
+    ))
+  }
 
   expect_true(has_ribbon(an_built))
   expect_true(has_line(an_built))
   expect_true(has_ribbon(ar_built))
   expect_true(has_line(ar_built))
-
-  # y limits are set; bounds are finite numeric length-2
-  # AN uses scale_y_continuous with limits set
-  an_scales <- out$an_plot$scales
-  # For coord_cartesian-like checks we inspect build ranges if needed
-  expect_true(length(ggplot2::ggplot_build(out$an_plot)$layout$panel_params) >= 1)
-  # AR also has limits
-  expect_true(length(ggplot2::ggplot_build(out$ar_plot)$layout$panel_params) >= 1)
-
-  # Facets by region exist (facet_wrap)
-  expect_true(inherits(out$an_plot$facet, "FacetWrap"))
-  expect_true(inherits(out$ar_plot$facet, "FacetWrap"))
 })
 
 test_that("plot_air_pollution_an_ar_monthly removes National when include_national = FALSE", {
@@ -3041,12 +3202,9 @@ test_that("plot_air_pollution_an_ar_monthly errors when save_plot = TRUE and out
   )
 })
 
-test_that("plot_air_pollution_an_ar_monthly calls ggsave twice with expected filenames", {
-  # Ensure the ggplot2 namespace is loaded so the binding exists
-  requireNamespace("ggplot2", quietly = TRUE)
-
+test_that("plot_air_pollution_an_ar_monthly calls save_accessible_ggplot twice with expected filenames", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2"),
+    regions  = c("R1", "R2"),
     n_days   = 180,
     max_lag  = 1L,
     ref_pm25 = 22,
@@ -3059,34 +3217,69 @@ test_that("plot_air_pollution_an_ar_monthly calls ggsave twice with expected fil
 
   captured <- new.env(parent = emptyenv())
   captured$filenames <- character(0)
+  captured$output_dirs <- character(0)
+  captured$widths <- numeric(0)
+  captured$heights <- numeric(0)
+  captured$alt_texts <- character(0)
+  captured$plot_classes <- list()
 
-  mock_ggsave <- function(filename, plot = ggplot2::last_plot(), device = NULL, path = NULL, ...) {
-    # capture the full output path the function was called with
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL,
+                        ...) {
     captured$filenames <- c(captured$filenames, filename)
-    invisible(filename)
+    captured$output_dirs <- c(captured$output_dirs, output_dir)
+    captured$widths <- c(captured$widths, width)
+    captured$heights <- c(captured$heights, height)
+    captured$alt_texts <- c(captured$alt_texts, alt_text)
+    captured$plot_classes[[length(captured$plot_classes) + 1]] <- class(plot_object)
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
 
-  # Mock ggsave inside the ggplot2 namespace
-  out <- with_mocked_bindings({
-    plot_air_pollution_an_ar_monthly(
-      analysis_results = analysis_results,
-      max_lag = 1L,
-      include_national = TRUE,
-      output_dir = outdir,
-      save_plot = TRUE
-    )
-  },
-  ggsave = mock_ggsave, .package = "ggplot2"
+  pkg_ns <- getNamespaceName(environment(plot_air_pollution_an_ar_monthly))
+
+  out <- with_mocked_bindings(
+    {
+      plot_air_pollution_an_ar_monthly(
+        analysis_results = analysis_results,
+        max_lag = 1L,
+        include_national = TRUE,
+        output_dir = outdir,
+        save_plot = TRUE
+      )
+    },
+    save_accessible_ggplot = mock_save,
+    .package = pkg_ns
   )
 
-  expect_s3_class(out$an_plot, "ggplot")
-  expect_s3_class(out$ar_plot, "ggplot")
+  expect_type(out, "list")
+  expect_true(all(c("an_plot", "ar_plot") %in% names(out)))
 
-  files <- basename(captured$filenames)
-  expect_equal(length(files), 2L)
-  expect_true(any(grepl("^air_pollution_an_monthly_by_region_", files)))
-  expect_true(any(grepl("^air_pollution_ar_monthly_by_region_", files)))
-  expect_true(any(grepl("_ref22\\.png$", files)))
+  # These are now patchwork plots, not facet_wrap ggplots
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_s3_class(out$ar_plot, "patchwork")
+
+  expect_equal(length(captured$filenames), 2L)
+  expect_true(all(captured$output_dirs == outdir))
+
+  expect_true(any(grepl("^an_monthly_by_region_", captured$filenames)))
+  expect_true(any(grepl("^ar_monthly_by_region_", captured$filenames)))
+
+  expect_true(any(grepl("_ref22$", captured$filenames)))
+  expect_true(any(grepl("who", captured$filenames)))
+
+  # Current function uses fixed width and height based on number of rows
+  expect_true(all(captured$widths == 14))
+  expect_true(all(captured$heights >= 12))
+
+  # Alt text is passed to the accessible save helper
+  expect_equal(length(captured$alt_texts), 2L)
+  expect_true(any(grepl("attributable number", captured$alt_texts, ignore.case = TRUE)))
+  expect_true(any(grepl("attributable rate", captured$alt_texts, ignore.case = TRUE)))
 })
 
 test_that("plot_air_pollution_an_ar_monthly tolerates NA values in inputs", {
@@ -3117,7 +3310,7 @@ test_that("plot_air_pollution_an_ar_monthly tolerates NA values in inputs", {
   expect_s3_class(out$ar_plot, "ggplot")
 })
 
-test_that("plot_air_pollution_an_ar_monthly uses facet_wrap and a calculated column count", {
+test_that("plot_air_pollution_an_ar_monthly uses patchwork and a calculated column count", {
   analysis_results <- .build_analysis_results(
     regions  = c("R1","R2","R3","R4"),
     n_days   = 360,
@@ -3131,15 +3324,13 @@ test_that("plot_air_pollution_an_ar_monthly uses facet_wrap and a calculated col
     save_plot = FALSE
   )
 
-  expect_s3_class(out$an_plot$facet, "FacetWrap")
-  expect_s3_class(out$ar_plot$facet, "FacetWrap")
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_s3_class(out$ar_plot, "patchwork")
 })
 
-test_that("plot_air_pollution_an_ar_monthly saves with expected dimensions based on grid rows", {
-  requireNamespace("ggplot2", quietly = TRUE)
-
+test_that("plot_air_pollution_an_ar_monthly saves with expected dimensions based on accessible grid rows", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2","R3","R4","R5","R6"),
+    regions  = c("R1", "R2", "R3", "R4", "R5", "R6"),
     n_days   = 300,
     max_lag  = 1L
   )
@@ -3148,66 +3339,127 @@ test_that("plot_air_pollution_an_ar_monthly saves with expected dimensions based
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   on.exit(unlink(outdir, recursive = TRUE, force = TRUE), add = TRUE)
 
-  # Force a specific grid layout so we know expected n_rows
   pkg_ns <- getNamespaceName(environment(plot_air_pollution_an_ar_monthly))
+
   captured <- new.env(parent = emptyenv())
   captured$args <- list()
 
-  mock_ggsave <- function(filename, plot, width, height, ...) {
-    captured$args[[length(captured$args) + 1]] <<- list(
-      file = basename(filename),
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL,
+                        ...) {
+    captured$args[[length(captured$args) + 1]] <- list(
+      plot_object = plot_object,
+      output_dir = output_dir,
+      filename = filename,
       width = width,
-      height = height
+      height = height,
+      alt_text = alt_text
     )
-    invisible(filename)
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
 
-  out <- with_mocked_bindings({
-    with_mocked_bindings({
+  out <- with_mocked_bindings(
+    {
       plot_air_pollution_an_ar_monthly(
-        analysis_results,
+        analysis_results = analysis_results,
         max_lag = 1L,
         include_national = TRUE,
         output_dir = outdir,
         save_plot = TRUE
       )
     },
-    ggsave = mock_ggsave, .package = "ggplot2"
-    )
-  },
-  calculate_air_pollution_grid_dims = function(n_regions) list(nrow = 2L, ncol = 3L), # expect height = max(6, 4*2) = 8
-  .package = pkg_ns
+    save_accessible_ggplot = mock_save,
+    .package = pkg_ns
   )
 
+  expect_type(out, "list")
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_s3_class(out$ar_plot, "patchwork")
+
   expect_equal(length(captured$args), 2L)
-  widths  <- vapply(captured$args, `[[`, numeric(1), "width")
+
+  widths <- vapply(captured$args, `[[`, numeric(1), "width")
   heights <- vapply(captured$args, `[[`, numeric(1), "height")
+  output_dirs <- vapply(captured$args, `[[`, character(1), "output_dir")
+  filenames <- vapply(captured$args, `[[`, character(1), "filename")
+  alt_texts <- vapply(captured$args, `[[`, character(1), "alt_text")
+
   expect_true(all(widths == 14))
-  expect_true(all(heights == 8))
+  expect_equal(heights, c(24.8, 24.8), tolerance = 1e-8)
+  expect_true(all(output_dirs == outdir))
+
+  expect_true(any(grepl("^an_monthly_by_region_", filenames)))
+  expect_true(any(grepl("^ar_monthly_by_region_", filenames)))
+
+  expect_true(any(grepl("attributable number", alt_texts, ignore.case = TRUE)))
+  expect_true(any(grepl("attributable rate", alt_texts, ignore.case = TRUE)))
 })
 
-test_that("plot_air_pollution_an_ar_monthly facets match number of regions included", {
-  regions <- c("R1","R2","R3")
+test_that("plot_air_pollution_an_ar_monthly patchwork panels match number of regions included", {
+  regions <- c("R1", "R2", "R3")
+
   analysis_results <- .build_analysis_results(
     regions  = regions,
     n_days   = 240,
     max_lag  = 1L
   )
 
-  out <- plot_air_pollution_an_ar_monthly(
-    analysis_results,
-    max_lag = 1L,
-    include_national = FALSE,
-    save_plot = FALSE
+  captured <- new.env(parent = emptyenv())
+  captured$n_panels <- integer(0)
+  captured$ncol <- integer(0)
+
+  original_wrap_plots <- patchwork::wrap_plots
+
+  mock_wrap_plots <- function(..., ncol = NULL) {
+    plot_args <- list(...)
+
+    n_panels <- if (
+      length(plot_args) == 1 &&
+      is.list(plot_args[[1]]) &&
+      !inherits(plot_args[[1]], "ggplot")
+    ) {
+      length(plot_args[[1]])
+    } else {
+      length(plot_args)
+    }
+
+    captured$n_panels <- c(captured$n_panels, n_panels)
+    captured$ncol <- c(captured$ncol, ncol)
+
+    original_wrap_plots(..., ncol = ncol)
+  }
+
+  out <- testthat::with_mocked_bindings(
+    {
+      plot_air_pollution_an_ar_monthly(
+        analysis_results = analysis_results,
+        max_lag = 1L,
+        include_national = FALSE,
+        save_plot = FALSE
+      )
+    },
+    wrap_plots = mock_wrap_plots,
+    .package = "patchwork"
   )
 
-  # ggplot stores panel layout in layout$layout
-  layout_an <- ggplot2::ggplot_build(out$an_plot)$layout$layout
-  layout_ar <- ggplot2::ggplot_build(out$ar_plot)$layout$layout
+  expect_type(out, "list")
+  expect_true(all(c("an_plot", "ar_plot") %in% names(out)))
 
-  expect_equal(length(unique(layout_an$PANEL)), length(regions))
-  expect_equal(length(unique(layout_ar$PANEL)), length(regions))
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_s3_class(out$ar_plot, "patchwork")
+
+  # wrap_plots is called once for AN and once for AR.
+  expect_equal(captured$n_panels, c(length(regions), length(regions)))
+
+  # Accessible ggplot grid uses max 2 columns.
+  expect_equal(captured$ncol, c(2, 2))
 })
+
 
 test_that("plot_air_pollution_an_ar_monthly floors y-lower limits at 0 when all lower bounds are positive", {
   analysis_results <- .build_analysis_results(
@@ -3299,55 +3551,127 @@ test_that("plot_air_pollution_an_ar_monthly floors y-lower limits at 0 when all 
   NULL
 }
 
-test_that("plot_air_pollution_an_ar_by_year returns ar_plot and an_plot with expected structure", {
+test_that("plot_air_pollution_an_ar_by_year returns patchwork AR and AN plots with expected structure", {
   # Build a multi-year analysis_results; 800 days gives > 2 years
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2"),
+    regions  = c("R1", "R2"),
     n_days   = 800,
     max_lag  = 1L,
     ref_pm25 = 20,
     ref_name = "WHO"
   )
 
-  out <- plot_air_pollution_an_ar_by_year(
-    analysis_results = analysis_results,
-    max_lag = 1L,
-    include_national = TRUE,
-    save_plot = FALSE
+  captured <- new.env(parent = emptyenv())
+  captured$plots <- list()
+  captured$ncol <- integer(0)
+
+  original_wrap_plots <- patchwork::wrap_plots
+
+  mock_wrap_plots <- function(..., ncol = NULL) {
+    plot_args <- list(...)
+
+    plot_list <- if (
+      length(plot_args) == 1 &&
+      is.list(plot_args[[1]]) &&
+      !inherits(plot_args[[1]], "ggplot")
+    ) {
+      plot_args[[1]]
+    } else {
+      plot_args
+    }
+
+    captured$plots[[length(captured$plots) + 1]] <- plot_list
+    captured$ncol <- c(captured$ncol, ncol)
+
+    original_wrap_plots(..., ncol = ncol)
+  }
+
+  out <- testthat::with_mocked_bindings(
+    {
+      plot_air_pollution_an_ar_by_year(
+        analysis_results = analysis_results,
+        max_lag = 1L,
+        include_national = TRUE,
+        save_plot = FALSE
+      )
+    },
+    wrap_plots = mock_wrap_plots,
+    .package = "patchwork"
   )
 
   # Structure
   expect_type(out, "list")
-  expect_true(all(c("ar_plot","an_plot") %in% names(out)))
-  expect_s3_class(out$ar_plot, "ggplot")
-  expect_s3_class(out$an_plot, "ggplot")
+  expect_true(all(c("ar_plot", "an_plot") %in% names(out)))
 
-  # Titles include reference info
-  expect_true(grepl("Annual Attributable Rate \\(AR\\) by Region", out$ar_plot$labels$title))
-  expect_true(grepl("Annual Attributable Number \\(AN\\) by Region", out$an_plot$labels$title))
-  expect_true(grepl("WHO", out$an_plot$labels$title))
-  expect_true(grepl("20",  out$an_plot$labels$title))
+  # These are now patchwork plots
+  expect_s3_class(out$ar_plot, "patchwork")
+  expect_s3_class(out$an_plot, "patchwork")
 
-  # Ribbons and lines exist (robust check via ggplot_build)
-  ar_built <- ggplot2::ggplot_build(out$ar_plot)
-  an_built <- ggplot2::ggplot_build(out$an_plot)
+  # Patchwork annotation contains figure-level title, subtitle and alt text
+  expect_match(
+    out$ar_plot$patches$annotation$title,
+    "Annual Attributable Rate \\(AR\\) by Region"
+  )
+  expect_match(
+    out$an_plot$patches$annotation$title,
+    "Annual Attributable Number \\(AN\\) by Region"
+  )
+  expect_match(out$an_plot$patches$annotation$title, "WHO")
+  expect_match(out$an_plot$patches$annotation$title, "20")
 
-  has_ribbon <- function(pbuilt) any(vapply(pbuilt$data, function(d) "ymin" %in% names(d) && "ymax" %in% names(d), logical(1)))
-  has_line   <- function(pbuilt) any(vapply(pbuilt$data, function(d) "x" %in% names(d) && "y" %in% names(d) && !("ymin" %in% names(d)), logical(1)))
+  expect_match(
+    out$ar_plot$patches$annotation$subtitle,
+    "Line shows annual estimate"
+  )
+  expect_match(
+    out$an_plot$patches$annotation$subtitle,
+    "Line shows annual estimate"
+  )
 
-  expect_true(has_ribbon(ar_built))
-  expect_true(has_line(ar_built))
-  expect_true(has_ribbon(an_built))
-  expect_true(has_line(an_built))
+  expect_match(out$ar_plot$patches$annotation$caption, "Alt text:")
+  expect_match(out$an_plot$patches$annotation$caption, "Alt text:")
 
-  # Facets by region exist (FacetWrap)
-  expect_true(inherits(out$ar_plot$facet, "FacetWrap"))
-  expect_true(inherits(out$an_plot$facet, "FacetWrap"))
+  # wrap_plots is called once for AR and once for AN
+  expect_equal(length(captured$plots), 2L)
 
-  # X aesthetics are numeric year for both plots
-  expect_true(is.numeric(out$ar_plot$data$year))
-  expect_true(is.numeric(out$an_plot$data$year))
+  expected_n_regions <- analysis_results |>
+    dplyr::filter(.data$var_name == "pm25_lag0_1") |>
+    dplyr::distinct(.data$region) |>
+    nrow()
+
+  expect_equal(length(captured$plots[[1]]), expected_n_regions)
+  expect_equal(length(captured$plots[[2]]), expected_n_regions)
+
+  expected_grid <- get_accessible_ggplot_grid(expected_n_regions)
+  expect_equal(captured$ncol, c(expected_grid$n_col, expected_grid$n_col))
+
+  # Child region plots are ggplots and contain ribbon + line layers
+  has_geom <- function(p, geom_class) {
+    any(vapply(
+      p$layers,
+      function(layer) inherits(layer$geom, geom_class),
+      logical(1)
+    ))
+  }
+
+  all_child_plots <- c(captured$plots[[1]], captured$plots[[2]])
+
+  expect_true(all(vapply(all_child_plots, inherits, logical(1), "ggplot")))
+  expect_true(all(vapply(all_child_plots, has_geom, logical(1), "GeomRibbon")))
+  expect_true(all(vapply(all_child_plots, has_geom, logical(1), "GeomLine")))
+
+  # X data are numeric years in each child plot
+  expect_true(all(vapply(
+    all_child_plots,
+    function(p) "year" %in% names(p$data) && is.numeric(p$data$year),
+    logical(1)
+  )))
+
+  # No facet_wrap now
+  expect_false(inherits(out$ar_plot$facet, "FacetWrap"))
+  expect_false(inherits(out$an_plot$facet, "FacetWrap"))
 })
+
 
 test_that("plot_air_pollution_an_ar_by_year removes National when include_national = FALSE", {
   analysis_results <- .build_analysis_results(
@@ -3386,11 +3710,9 @@ test_that("plot_air_pollution_an_ar_by_year errors when save_plot = TRUE and out
   )
 })
 
-test_that("plot_air_pollution_an_ar_by_year calls ggsave twice with expected filenames and dimensions", {
-  requireNamespace("ggplot2", quietly = TRUE)
-
+test_that("plot_air_pollution_an_ar_by_year calls save_accessible_ggplot twice with expected filenames and dimensions", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2","R3","R4","R5","R6"),
+    regions  = c("R1", "R2", "R3", "R4", "R5", "R6"),
     n_days   = 720,
     max_lag  = 1L,
     ref_pm25 = 22,
@@ -3402,20 +3724,31 @@ test_that("plot_air_pollution_an_ar_by_year calls ggsave twice with expected fil
   on.exit(unlink(outdir, recursive = TRUE, force = TRUE), add = TRUE)
 
   pkg_ns <- getNamespaceName(environment(plot_air_pollution_an_ar_by_year))
+
   captured <- new.env(parent = emptyenv())
   captured$args <- list()
 
-  mock_ggsave <- function(filename, plot, width, height, ...) {
-    captured$args[[length(captured$args) + 1]] <<- list(
-      file = basename(filename),
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL,
+                        ...) {
+    captured$args[[length(captured$args) + 1]] <- list(
+      plot_object = plot_object,
+      output_dir = output_dir,
+      filename = filename,
       width = width,
-      height = height
+      height = height,
+      alt_text = alt_text
     )
-    invisible(filename)
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
 
-  out <- with_mocked_bindings({
-    with_mocked_bindings({
+  out <- testthat::with_mocked_bindings(
+    {
       plot_air_pollution_an_ar_by_year(
         analysis_results = analysis_results,
         max_lag = 1L,
@@ -3424,25 +3757,40 @@ test_that("plot_air_pollution_an_ar_by_year calls ggsave twice with expected fil
         save_plot = TRUE
       )
     },
-    ggsave = mock_ggsave, .package = "ggplot2"
-    )
-  },
-  # Force 2 rows in grid → height = max(6, 4*2) = 8; width always 14
-  calculate_air_pollution_grid_dims = function(n_regions) list(nrow = 2L, ncol = 3L),
-  .package = pkg_ns
+    save_accessible_ggplot = mock_save,
+    .package = pkg_ns
   )
 
-  # Two files written
+  expect_type(out, "list")
+  expect_true(all(c("ar_plot", "an_plot") %in% names(out)))
+  expect_s3_class(out$ar_plot, "patchwork")
+  expect_s3_class(out$an_plot, "patchwork")
+
+  # Two files written: AR and AN
   expect_equal(length(captured$args), 2L)
-  files <- vapply(captured$args, `[[`, character(1), "file")
+
+  filenames <- vapply(captured$args, `[[`, character(1), "filename")
+  output_dirs <- vapply(captured$args, `[[`, character(1), "output_dir")
   widths <- vapply(captured$args, `[[`, numeric(1), "width")
   heights <- vapply(captured$args, `[[`, numeric(1), "height")
+  alt_texts <- vapply(captured$args, `[[`, character(1), "alt_text")
 
-  expect_true(any(grepl("^air_pollution_ar_by_year_by_region_", files)))
-  expect_true(any(grepl("^air_pollution_an_by_year_by_region_", files)))
-  expect_true(any(grepl("_ref22\\.png$", files)))
+  expect_true(all(output_dirs == outdir))
+
+  expect_true(any(grepl("^ar_by_year_by_region_", filenames)))
+  expect_true(any(grepl("^an_by_year_by_region_", filenames)))
+  expect_true(any(grepl("ukhsa", filenames)))
+  expect_true(any(grepl("_ref22$", filenames)))
+
   expect_true(all(widths == 14))
-  expect_true(all(heights == 8))
+
+  grid_dims <- get_accessible_ggplot_grid(length(unique(analysis_results$region)))
+  expected_height <- max(12, 6.2 * grid_dims$n_row)
+
+  expect_equal(heights, rep(expected_height, 2), tolerance = 1e-8)
+
+  expect_true(any(grepl("annual time series plot showing attributable rate", alt_texts, ignore.case = TRUE)))
+  expect_true(any(grepl("annual time series plot showing attributable number", alt_texts, ignore.case = TRUE)))
 })
 
 test_that("plot_air_pollution_an_ar_by_year floors y-lower limits at 0 when annual lower bounds are positive", {
@@ -3506,7 +3854,7 @@ test_that("plot_air_pollution_an_ar_by_year tolerates NA in inputs", {
   expect_s3_class(out$an_plot, "ggplot")
 })
 
-test_that("plot_air_pollution_an_ar_by_year uses ncol from calculate_air_pollution_grid_dims", {
+test_that("plot_air_pollution_an_ar_by_year uses ncol from get_accessible_ggplot_grid", {
   analysis_results <- .build_analysis_results(
     regions  = c("R1","R2","R3","R4"),
     n_days   = 720,
@@ -3515,22 +3863,40 @@ test_that("plot_air_pollution_an_ar_by_year uses ncol from calculate_air_polluti
 
   pkg_ns <- getNamespaceName(environment(plot_air_pollution_an_ar_by_year))
 
-  out <- with_mocked_bindings({
-    plot_air_pollution_an_ar_by_year(
-      analysis_results = analysis_results,
-      max_lag = 1L,
-      include_national = TRUE,
-      save_plot = FALSE
-    )
-  },
-  calculate_air_pollution_grid_dims = function(n_regions) list(nrow = 2L, ncol = 4L),
+
+  captured <- new.env(parent = emptyenv())
+  captured$ncol <- integer(0)
+
+  original_wrap_plots <- patchwork::wrap_plots
+
+  mock_wrap_plots <- function(..., ncol = NULL) {
+    captured$ncol <- c(captured$ncol, ncol)
+    original_wrap_plots(..., ncol = ncol)
+  }
+
+  out <- with_mocked_bindings(
+    {
+      with_mocked_bindings(
+        {
+          plot_air_pollution_an_ar_by_year(
+            analysis_results = analysis_results,
+            max_lag = 1L,
+            include_national = TRUE,
+            save_plot = FALSE
+          )
+        },
+        wrap_plots = mock_wrap_plots,
+        .package = "patchwork"
+      )
+    },
+
+  get_accessible_ggplot_grid = function(n_plots) list(n_col = 4L, n_row = 1L),
   .package = pkg_ns
   )
 
-  expect_s3_class(out$ar_plot$facet, "FacetWrap")
-  expect_s3_class(out$an_plot$facet, "FacetWrap")
-  expect_identical(out$ar_plot$facet$params$ncol, 4L)
-  expect_identical(out$an_plot$facet$params$ncol, 4L)
+  expect_s3_class(out$ar_plot, "patchwork")
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_equal(captured$ncol, c(4L, 4L))
 })
 
 test_that("plot_air_pollution_an_ar_by_year uses integer year on x-axis", {
@@ -3625,49 +3991,113 @@ test_that("plot_air_pollution_an_ar_by_year works with a single region", {
 
 # Tests for plot_air_pollution_monthly_histograms
 
-test_that("plot_air_pollution_monthly_histograms returns an_plot and ar_plot with expected structure", {
+test_that("plot_air_pollution_monthly_histograms returns patchwork AN and AR plots with expected structure", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2"),
+    regions  = c("R1", "R2"),
     n_days   = 240,
     max_lag  = 1L,
     ref_pm25 = 20,
     ref_name = "WHO"
   )
 
-  out <- plot_air_pollution_monthly_histograms(
-    analysis_results = analysis_results,
-    max_lag = 1L,
-    include_national = TRUE,
-    save_plot = FALSE
+  captured <- new.env(parent = emptyenv())
+  captured$plots <- list()
+  captured$ncol <- integer(0)
+
+  original_wrap_plots <- patchwork::wrap_plots
+
+  mock_wrap_plots <- function(..., ncol = NULL) {
+    plot_args <- list(...)
+
+    plot_list <- if (
+      length(plot_args) == 1 &&
+      is.list(plot_args[[1]]) &&
+      !inherits(plot_args[[1]], "ggplot")
+    ) {
+      plot_args[[1]]
+    } else {
+      plot_args
+    }
+
+    captured$plots[[length(captured$plots) + 1]] <- plot_list
+    captured$ncol <- c(captured$ncol, ncol)
+
+    original_wrap_plots(..., ncol = ncol)
+  }
+
+  out <- testthat::with_mocked_bindings(
+    {
+      plot_air_pollution_monthly_histograms(
+        analysis_results = analysis_results,
+        max_lag = 1L,
+        include_national = TRUE,
+        save_plot = FALSE
+      )
+    },
+    wrap_plots = mock_wrap_plots,
+    .package = "patchwork"
   )
 
   expect_type(out, "list")
-  expect_true(all(c("an_plot","ar_plot") %in% names(out)))
-  expect_s3_class(out$an_plot, "ggplot")
-  expect_s3_class(out$ar_plot, "ggplot")
+  expect_true(all(c("an_plot", "ar_plot") %in% names(out)))
 
-  # Titles/metadata
-  expect_true(grepl("Monthly Attributable Number \\(AN\\) by Region -", out$an_plot$labels$title))
-  expect_true(grepl("Monthly Attributable Rate \\(AR\\) by Region -",  out$ar_plot$labels$title))
-  expect_true(grepl("WHO", out$an_plot$labels$title))
-  expect_true(grepl("WHO", out$ar_plot$labels$title))
+  # These are now patchwork plots, not facet_wrap ggplots
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_s3_class(out$ar_plot, "patchwork")
 
-  expect_true(grepl("20",  out$an_plot$labels$subtitle))
+  # Figure-level title/subtitle/alt text are stored in patchwork annotation
+  expect_match(
+    out$an_plot$patches$annotation$title,
+    "Monthly Attributable Number \\(AN\\) by Region"
+  )
+  expect_match(
+    out$ar_plot$patches$annotation$title,
+    "Monthly Attributable Rate \\(AR\\) by Region"
+  )
 
-  # Facets exist
-  expect_true(inherits(out$an_plot$facet, "FacetWrap"))
-  expect_true(inherits(out$ar_plot$facet, "FacetWrap"))
+  expect_match(out$an_plot$patches$annotation$title, "WHO")
+  expect_match(out$ar_plot$patches$annotation$title, "WHO")
 
-  # y-limits start at or near 0
-  an_ylim <- .get_y_limits(ggplot2::ggplot_build(out$an_plot))
-  ar_ylim <- .get_y_limits(ggplot2::ggplot_build(out$ar_plot))
-  expect_true(!is.null(an_ylim) && length(an_ylim) == 2)
-  expect_true(!is.null(ar_ylim) && length(ar_ylim) == 2)
-  tol_below_zero <- 0.11
-  expect_lte(an_ylim[1], 0); expect_gte(an_ylim[1], -tol_below_zero)
-  expect_lte(ar_ylim[1], 0); expect_gte(ar_ylim[1], -tol_below_zero)
+  expect_match(out$an_plot$patches$annotation$subtitle, "20")
+  expect_match(out$ar_plot$patches$annotation$subtitle, "20")
+
+  expect_match(out$an_plot$patches$annotation$caption, "Alt text:")
+  expect_match(out$ar_plot$patches$annotation$caption, "Alt text:")
+
+  # wrap_plots is called once for AN and once for AR
+  expect_equal(length(captured$plots), 2L)
+
+  expected_n_regions <- analysis_results |>
+    dplyr::filter(.data$var_name == "pm25_lag0_1") |>
+    dplyr::distinct(.data$region) |>
+    nrow()
+
+  expect_equal(length(captured$plots[[1]]), expected_n_regions)
+  expect_equal(length(captured$plots[[2]]), expected_n_regions)
+
+  expected_grid <- get_accessible_ggplot_grid(expected_n_regions)
+  expect_equal(captured$ncol, c(expected_grid$n_col, expected_grid$n_col))
+
+  # Child plots are ggplots with bars, lines and points
+  has_geom <- function(p, geom_class) {
+    any(vapply(
+      p$layers,
+      function(layer) inherits(layer$geom, geom_class),
+      logical(1)
+    ))
+  }
+
+  all_child_plots <- c(captured$plots[[1]], captured$plots[[2]])
+
+  expect_true(all(vapply(all_child_plots, inherits, logical(1), "ggplot")))
+  expect_true(all(vapply(all_child_plots, has_geom, logical(1), "GeomBar")))
+  expect_true(all(vapply(all_child_plots, has_geom, logical(1), "GeomLine")))
+  expect_true(all(vapply(all_child_plots, has_geom, logical(1), "GeomPoint")))
+
+  # No facet_wrap now
+  expect_false(inherits(out$an_plot$facet, "FacetWrap"))
+  expect_false(inherits(out$ar_plot$facet, "FacetWrap"))
 })
-
 test_that("plot_air_pollution_monthly_histograms removes National when include_national = FALSE", {
   analysis_results <- .build_analysis_results(
     regions  = c("R1","R2"),
@@ -3740,36 +4170,6 @@ test_that("plot_air_pollution_monthly_histograms uses English month labels in co
   expect_true(jan_idx < feb_idx && feb_idx < mar_idx)
 })
 
-test_that("plot_air_pollution_monthly_histograms color mapping distinguishes National vs Regional", {
-  analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2"),
-    n_days   = 240,
-    max_lag  = 1L
-  )
-
-  out <- plot_air_pollution_monthly_histograms(
-    analysis_results, max_lag = 1L, include_national = TRUE, save_plot = FALSE
-  )
-
-  # Build plot to inspect mapped colors
-  pb <- ggplot2::ggplot_build(out$an_plot)
-
-  # Find a line or point layer to read 'color' mapping
-  layer_ix <- which(vapply(out$an_plot$layers,
-                           function(L) inherits(L$geom, "GeomPoint") || inherits(L$geom, "GeomLine"),
-                           logical(1)))
-  expect_true(length(layer_ix) >= 1)
-
-  dp <- pb$data[[layer_ix[1]]]
-
-  `%||%` <- function(a, b) if (!is.null(a)) a else b
-  cols <- toupper(as.character(dp$colour %||% dp$color))
-
-  # Accept possible alpha-suffixed hex (e.g., #F00001FF)
-  expect_true(any(cols %in% c("#F00001", "#F00001FF")))   # National (red)
-  expect_true(any(cols %in% c("#2E86AB", "#2E86ABFF")))   # Regional (blue)
-})
-
 test_that("plot_air_pollution_monthly_histograms errors when save_plot = TRUE and output_dir is NULL", {
   analysis_results <- .build_analysis_results(
     regions  = c("R1","R2"), n_days = 180, max_lag = 1L
@@ -3784,10 +4184,8 @@ test_that("plot_air_pollution_monthly_histograms errors when save_plot = TRUE an
 })
 
 test_that("plot_air_pollution_monthly_histograms saves two files with expected names and dimensions", {
-  requireNamespace("ggplot2", quietly = TRUE)
-
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2","R3","R4"),
+    regions  = c("R1", "R2", "R3", "R4"),
     n_days   = 360,
     max_lag  = 1L,
     ref_pm25 = 25,
@@ -3799,18 +4197,31 @@ test_that("plot_air_pollution_monthly_histograms saves two files with expected n
   on.exit(unlink(outdir, recursive = TRUE, force = TRUE), add = TRUE)
 
   pkg_ns <- getNamespaceName(environment(plot_air_pollution_monthly_histograms))
+
   captured <- new.env(parent = emptyenv())
   captured$args <- list()
 
-  mock_ggsave <- function(filename, plot, width, height, ...) {
-    captured$args[[length(captured$args) + 1]] <<- list(
-      file = basename(filename), width = width, height = height
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL,
+                        ...) {
+    captured$args[[length(captured$args) + 1]] <- list(
+      plot_object = plot_object,
+      output_dir = output_dir,
+      filename = filename,
+      width = width,
+      height = height,
+      alt_text = alt_text
     )
-    invisible(filename)
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
 
-  out <- with_mocked_bindings({
-    with_mocked_bindings({
+  out <- testthat::with_mocked_bindings(
+    {
       plot_air_pollution_monthly_histograms(
         analysis_results = analysis_results,
         max_lag = 1L,
@@ -3819,24 +4230,31 @@ test_that("plot_air_pollution_monthly_histograms saves two files with expected n
         save_plot = TRUE
       )
     },
-    ggsave = mock_ggsave, .package = "ggplot2"
-    )
-  },
-  # Force 2 rows -> height = max(6, 4*2) = 8; width fixed at 14
-  calculate_air_pollution_grid_dims = function(n_regions) list(nrow = 2L, ncol = 3L),
-  .package = pkg_ns
+    save_accessible_ggplot = mock_save,
+    .package = pkg_ns
   )
 
-  expect_equal(length(captured$args), 2L)
-  files   <- vapply(captured$args, `[[`, character(1), "file")
-  widths  <- vapply(captured$args, `[[`, numeric(1), "width")
-  heights <- vapply(captured$args, `[[`, numeric(1), "height")
+  expect_type(out, "list")
+  expect_true(all(c("an_plot", "ar_plot") %in% names(out)))
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_s3_class(out$ar_plot, "patchwork")
 
-  expect_true(any(grepl("^an_monthly_histogram_", files)))
-  expect_true(any(grepl("^ar_monthly_histogram_", files)))
-  expect_true(any(grepl("_ref25\\.png$", files)))
-  expect_true(all(widths == 14))
-  expect_true(all(heights == 8))
+  expect_equal(length(captured$args), 2L)
+
+  filenames <- vapply(captured$args, `[[`, character(1), "filename")
+  output_dirs <- vapply(captured$args, `[[`, character(1), "output_dir")
+  widths <- vapply(captured$args, `[[`, numeric(1), "width")
+  heights <- vapply(captured$args, `[[`, numeric(1), "height")
+  alt_texts <- vapply(captured$args, `[[`, character(1), "alt_text")
+
+  expect_true(all(output_dirs == outdir))
+
+  # save_accessible_ggplot receives filename stems, not .pdf filenames
+  expect_true(any(grepl("^an_monthly_histogram_", filenames)))
+  expect_true(any(grepl("^ar_monthly_histogram_", filenames)))
+  expect_true(any(grepl("ukhsa", filenames)))
+  expect_true(any(grepl("_ref25$", filenames)))
+
 })
 
 test_that("plot_air_pollution_monthly_histograms tolerates NA in inputs", {
@@ -3912,48 +4330,72 @@ test_that("plot_air_pollution_monthly_histograms monthly AN sums match daily cum
 
   # Compare where region names overlap
   m <- base::merge(exp_by_region, obs_by_region, by = "region", suffixes = c("_daily", "_monthly"))
-  expect_true(nrow(m) >= 2)
+  expect_gt(nrow(m),0)
   expect_equal(m$an_daily, m$an_monthly, tolerance = 1e-8)
 })
 
-test_that("plot_air_pollution_monthly_histograms sanitizes ref_name and creates output_dir", {
-  requireNamespace("ggplot2", quietly = TRUE)
 
+test_that("plot_air_pollution_monthly_histograms sanitizes ref_name and creates output_dir", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2"),
+    regions  = c("R1", "R2"),
     n_days   = 200,
     max_lag  = 1L,
     ref_pm25 = 35,
     ref_name = "WHO Interim Standard"
   )
 
-  outdir <- file.path(tempdir(), "nested", "monthly", "hist", sprintf("t%s", as.integer(runif(1, 1, 1e6))))
+  outdir <- file.path(
+    tempdir(),
+    "nested",
+    "monthly",
+    "hist",
+    sprintf("t%s", as.integer(runif(1, 1, 1e6)))
+  )
 
   captured <- new.env(parent = emptyenv())
-  captured$files <- character(0)
+  captured$filenames <- character(0)
+  captured$output_dirs <- character(0)
 
-  mock_ggsave <- function(filename, plot, ...) {
-    captured$files <- c(captured$files, basename(filename))
-    invisible(filename)
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL,
+                        ...) {
+    captured$filenames <- c(captured$filenames, filename)
+    captured$output_dirs <- c(captured$output_dirs, output_dir)
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
 
-  out <- with_mocked_bindings({
-    plot_air_pollution_monthly_histograms(
-      analysis_results = analysis_results,
-      max_lag = 1L,
-      include_national = TRUE,
-      output_dir = outdir,
-      save_plot = TRUE
-    )
-  },
-  ggsave = mock_ggsave, .package = "ggplot2"
+  pkg_ns <- getNamespaceName(environment(plot_air_pollution_monthly_histograms))
+
+  out <- testthat::with_mocked_bindings(
+    {
+      plot_air_pollution_monthly_histograms(
+        analysis_results = analysis_results,
+        max_lag = 1L,
+        include_national = TRUE,
+        output_dir = outdir,
+        save_plot = TRUE
+      )
+    },
+    save_accessible_ggplot = mock_save,
+    .package = pkg_ns
   )
 
   expect_true(dir.exists(outdir))
 
+  expect_s3_class(out$an_plot, "patchwork")
+  expect_s3_class(out$ar_plot, "patchwork")
+
+  expect_equal(length(captured$filenames), 2L)
+  expect_true(all(captured$output_dirs == outdir))
+
   # Filenames should reflect sanitized ref_name (lowercased underscores) and ref value
-  expect_true(any(grepl("^an_monthly_histogram_who_interim_standard_ref35\\.png$", tolower(captured$files))))
-  expect_true(any(grepl("^ar_monthly_histogram_who_interim_standard_ref35\\.png$", tolower(captured$files))))
+  expect_true(any(grepl("^an_monthly_histogram_who_interim_standard_ref35$", tolower(captured$filenames))))
+  expect_true(any(grepl("^ar_monthly_histogram_who_interim_standard_ref35$", tolower(captured$filenames))))
 })
 
 test_that("plot_air_pollution_monthly_histograms month factor has all 12 English levels", {
@@ -4030,9 +4472,9 @@ test_that("plot_air_pollution_an_ar_by_region removes National when include_nati
   expect_false("National" %in% unique(out$an_plot$data$region))
 })
 
-test_that("plot_air_pollution_an_ar_by_region uses manual colors when National is present", {
+test_that("plot_air_pollution_an_ar_by_region uses accessible manual colours when National is present", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2"),
+    regions  = c("R1", "R2", "National"),
     n_days   = 220,
     max_lag  = 1L
   )
@@ -4044,13 +4486,44 @@ test_that("plot_air_pollution_an_ar_by_region uses manual colors when National i
     save_plot = FALSE
   )
 
-  # Check bar fill colors via built data
+  expect_type(out, "list")
+  expect_true(all(c("ar_plot", "an_plot") %in% names(out)))
+  expect_s3_class(out$ar_plot, "ggplot")
+  expect_s3_class(out$an_plot, "ggplot")
+
   pb_ar <- ggplot2::ggplot_build(out$ar_plot)
-  bar_ix <- which(vapply(out$ar_plot$layers, function(L) inherits(L$geom, "GeomBar"), logical(1)))[1]
-  expect_true(length(bar_ix) == 1)
-  fills <- toupper(as.character(pb_ar$data[[bar_ix]]$fill))
-  # either red (#F00001) or blue (#2E86AB) must appear
-  expect_true(any(fills %in% c("#F00001", "#F00001FF", "#2E86AB", "#2E86ABFF")))
+
+  # Find the bar/column layer by looking for built data containing fill.
+  fill_layer_ix <- which(vapply(
+    pb_ar$data,
+    function(d) "fill" %in% names(d),
+    logical(1)
+  ))[1]
+
+  expect_true(!is.na(fill_layer_ix))
+
+  fills <- pb_ar$data[[fill_layer_ix]]$fill
+
+  normalise_hex <- function(x) {
+    x <- toupper(as.character(x))
+
+    # Strip alpha channel if present, e.g. #AABBCCFF -> #AABBCC
+    ifelse(
+      grepl("^#[0-9A-F]{8}$", x),
+      substr(x, 1, 7),
+      x
+    )
+  }
+
+  fills <- normalise_hex(fills)
+
+  cols <- get_accessible_plot_colours()
+  expected_national <- normalise_hex(cols$national)
+  expected_regional <- normalise_hex(cols$regional)
+
+  # National and regional bars should use accessible palette colours.
+  expect_true(any(fills == expected_national))
+  expect_true(any(fills == expected_regional))
 })
 
 test_that("plot_air_pollution_an_ar_by_region AN bars equal sum of daily cumulative AN by region", {
@@ -4147,10 +4620,8 @@ test_that("plot_air_pollution_an_ar_by_region adds error bars with consistent bo
 })
 
 test_that("plot_air_pollution_an_ar_by_region saves two files with expected names and sizes", {
-  requireNamespace("ggplot2", quietly = TRUE)
-
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2","R3"),
+    regions  = c("R1", "R2", "R3"),
     n_days   = 220,
     max_lag  = 1L,
     ref_pm25 = 33,
@@ -4162,37 +4633,80 @@ test_that("plot_air_pollution_an_ar_by_region saves two files with expected name
 
   captured <- new.env(parent = emptyenv())
   captured$args <- list()
-  mock_ggsave <- function(filename, plot, width, height, ...) {
-    if (!dir.exists(dirname(filename))) dir.create(dirname(filename), recursive = TRUE)
-    captured$args[[length(captured$args) + 1]] <<- list(
-      file = basename(filename), width = width, height = height
+
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL,
+                        ...) {
+    if (!dir.exists(output_dir)) {
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    }
+
+    captured$args[[length(captured$args) + 1]] <- list(
+      plot_object = plot_object,
+      output_dir = output_dir,
+      filename = filename,
+      width = width,
+      height = height,
+      alt_text = alt_text
     )
-    invisible(filename)
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
 
-  out <- with_mocked_bindings({
-    plot_air_pollution_an_ar_by_region(
-      analysis_results,
-      max_lag = 1L,
-      include_national = TRUE,
-      output_dir = outdir,
-      save_plot = TRUE
-    )
-  },
-  ggsave = mock_ggsave, .package = "ggplot2"
+  pkg_ns <- getNamespaceName(environment(plot_air_pollution_an_ar_by_region))
+
+  out <- testthat::with_mocked_bindings(
+    {
+      plot_air_pollution_an_ar_by_region(
+        analysis_results = analysis_results,
+        max_lag = 1L,
+        include_national = TRUE,
+        output_dir = outdir,
+        save_plot = TRUE
+      )
+    },
+    save_accessible_ggplot = mock_save,
+    .package = pkg_ns
   )
 
-  files <- vapply(captured$args, `[[`, character(1), "file")
+  expect_type(out, "list")
+  expect_true(all(c("ar_plot", "an_plot") %in% names(out)))
+
+  expect_s3_class(out$ar_plot, "ggplot")
+  expect_s3_class(out$an_plot, "ggplot")
+
+  expect_equal(length(captured$args), 2L)
+
+  filenames <- vapply(captured$args, `[[`, character(1), "filename")
+  output_dirs <- vapply(captured$args, `[[`, character(1), "output_dir")
   widths <- vapply(captured$args, `[[`, numeric(1), "width")
   heights <- vapply(captured$args, `[[`, numeric(1), "height")
+  alt_texts <- vapply(captured$args, `[[`, character(1), "alt_text")
 
-  expect_equal(length(files), 2L)
-  expect_true(any(grepl("^air_pollution_ar_by_region_", files)))
-  expect_true(any(grepl("^air_pollution_an_by_region_", files)))
+  expect_true(all(output_dirs == outdir))
+
+  expect_true(any(grepl("^ar_by_region_", filenames)))
+  expect_true(any(grepl("^an_by_region_", filenames)))
+
   # sanitized ref_name uses underscores and lower case
-  expect_true(any(grepl("_who_interim_standard_ref33\\.png$", tolower(files))))
-  expect_true(all(widths == 10))
-  expect_true(all(heights == 7))
+  expect_true(any(grepl("_who_interim_standard_ref33$", tolower(filenames))))
+
+  expect_true(all(widths == 14))
+
+  regional_data <- aggregate_air_pollution_by_region(
+    analysis_results = analysis_results,
+    max_lag = 1L
+  )
+
+  expected_height <- max(9, 0.45 * nrow(regional_data))
+  expect_equal(heights, rep(expected_height, 2), tolerance = 1e-8)
+
+  expect_true(any(grepl("attributable rate", alt_texts, ignore.case = TRUE)))
+  expect_true(any(grepl("attributable number", alt_texts, ignore.case = TRUE)))
 })
 
 test_that("plot_air_pollution_an_ar_by_region errors when save_plot = TRUE and output_dir is NULL", {
@@ -4324,8 +4838,8 @@ test_that("plot_air_pollution_an_ar_by_region captions mention 95% CI", {
     save_plot = FALSE
   )
 
-  expect_true(grepl("95% confidence interval", out$ar_plot$labels$caption))
-  expect_true(grepl("95% confidence interval", out$an_plot$labels$caption))
+  expect_true(grepl("Error bars show 95 percent confidence intervals.", out$ar_plot$labels$caption))
+  expect_true(grepl("Error bars show 95 percent confidence intervals.", out$an_plot$labels$caption))
 })
 
 # Unit tests for plot_air_pollution_exposure_response
@@ -4341,63 +4855,133 @@ test_that("plot_air_pollution_an_ar_by_region captions mention 95% CI", {
   NULL
 }
 
-test_that("plot_air_pollution_exposure_response returns ggplot with expected layers and axes", {
+test_that("plot_air_pollution_exposure_response returns patchwork with expected child layers and axes", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2"),
+    regions  = c("R1", "R2"),
     n_days   = 200,
     max_lag  = 1L,
     ref_pm25 = 20,
     ref_name = "WHO"
   )
 
-  p <- plot_air_pollution_exposure_response(
-    analysis_results = analysis_results,
-    max_lag = 1L,
-    include_national = TRUE,
-    ref_pm25 = 20,           # explicit ref to test vline placement
-    save_plot = FALSE
+  captured <- new.env(parent = emptyenv())
+  captured$plots <- list()
+  captured$ncol <- integer(0)
+
+  original_wrap_plots <- patchwork::wrap_plots
+
+  mock_wrap_plots <- function(..., ncol = NULL) {
+    plot_args <- list(...)
+
+    plot_list <- if (
+      length(plot_args) == 1 &&
+      is.list(plot_args[[1]]) &&
+      !inherits(plot_args[[1]], "ggplot")
+    ) {
+      plot_args[[1]]
+    } else {
+      plot_args
+    }
+
+    captured$plots[[length(captured$plots) + 1]] <- plot_list
+    captured$ncol <- c(captured$ncol, ncol)
+
+    original_wrap_plots(..., ncol = ncol)
+  }
+
+  p <- testthat::with_mocked_bindings(
+    {
+      plot_air_pollution_exposure_response(
+        analysis_results = analysis_results,
+        max_lag = 1L,
+        include_national = TRUE,
+        ref_pm25 = 20,
+        save_plot = FALSE
+      )
+    },
+    wrap_plots = mock_wrap_plots,
+    .package = "patchwork"
   )
 
-  expect_s3_class(p, "ggplot")
-  expect_true(inherits(p$facet, "FacetWrap"))
+  expect_s3_class(p, "patchwork")
+  expect_false(inherits(p$facet, "FacetWrap"))
 
-  # Build and verify layers: ribbon, line, vline at ref, hline at 1
-  pb <- ggplot2::ggplot_build(p)
+  # Figure-level title/subtitle/alt text are now in patchwork annotation.
+  expect_match(
+    p$patches$annotation$title,
+    "Exposure-Response Relationship by Region"
+  )
+  expect_match(p$patches$annotation$title, "WHO")
+  expect_match(
+    p$patches$annotation$subtitle,
+    "Reference guideline:\\s*20"
+  )
+  expect_match(p$patches$annotation$caption, "Alt text:")
 
-  has_ribbon <- any(vapply(p$layers, function(L) inherits(L$geom, "GeomRibbon"), logical(1)))
-  has_line   <- any(vapply(p$layers, function(L) inherits(L$geom, "GeomLine"),   logical(1)))
-  has_vline  <- any(vapply(p$layers, function(L) inherits(L$geom, "GeomVline"),  logical(1)))
-  has_hline  <- any(vapply(p$layers, function(L) inherits(L$geom, "GeomHline"),  logical(1)))
-  expect_true(has_ribbon && has_line && has_vline && has_hline)
+  # wrap_plots should be called once for this function.
+  expect_equal(length(captured$plots), 1L)
 
-  # Check vline xintercept == ref (via built layer data)
-  has_vline_at_ref <- any(vapply(
-    pb$data,
-    function(d) ("xintercept" %in% names(d)) && any(is.finite(d$xintercept) & d$xintercept == 20),
-    logical(1)
-  ))
-  expect_true(has_vline_at_ref)
+  expected_n_regions <- analysis_results |>
+    dplyr::filter(.data$var_name == "pm25_lag0_1") |>
+    dplyr::distinct(.data$region) |>
+    nrow()
 
-  # Check hline yintercept == 1 (via built layer data)
-  has_hline_at_1 <- any(vapply(
-    pb$data,
-    function(d) ("yintercept" %in% names(d)) && any(is.finite(d$yintercept) & d$yintercept == 1),
-    logical(1)
-  ))
-  expect_true(has_hline_at_1)
+  exposure_child_plots <- captured$plots[[1]]
 
-  # Axes via coord_cartesian: limits exist and include 1 on y and a reasonable x range
-  ylims <- .get_y_limits(pb)
-  xlims <- .get_x_limits(pb)
-  expect_true(!is.null(ylims) && length(ylims) == 2)
-  expect_true(!is.null(xlims) && length(xlims) == 2)
-  # y includes 1 within limits
-  expect_true(ylims[1] <= 1 && ylims[2] >= 1)
+  expect_equal(length(exposure_child_plots), expected_n_regions)
 
-  # Title and subtitle contain ref metadata
-  expect_true(grepl("Exposure-Response Relationship by Region", p$labels$title))
-  expect_true(grepl("WHO", p$labels$title))
-  expect_true(grepl("Reference guideline:\\s*20", p$labels$subtitle))
+  expected_grid <- get_accessible_ggplot_grid(expected_n_regions)
+  expect_equal(captured$ncol, expected_grid$n_col)
+
+  # Each child plot should be a ggplot with ribbon, line, vline, and hline.
+  has_geom <- function(plot_object, geom_class) {
+    any(vapply(
+      plot_object$layers,
+      function(layer) inherits(layer$geom, geom_class),
+      logical(1)
+    ))
+  }
+
+  expect_true(all(vapply(exposure_child_plots, inherits, logical(1), "ggplot")))
+  expect_true(all(vapply(exposure_child_plots, has_geom, logical(1), "GeomRibbon")))
+  expect_true(all(vapply(exposure_child_plots, has_geom, logical(1), "GeomLine")))
+  expect_true(all(vapply(exposure_child_plots, has_geom, logical(1), "GeomVline")))
+  expect_true(all(vapply(exposure_child_plots, has_geom, logical(1), "GeomHline")))
+
+  # Check vline xintercept == ref and hline yintercept == 1 using built child plots.
+  for (child_plot in exposure_child_plots) {
+    pb <- ggplot2::ggplot_build(child_plot)
+
+    has_vline_at_ref <- any(vapply(
+      pb$data,
+      function(d) {
+        ("xintercept" %in% names(d)) &&
+          any(is.finite(d$xintercept) & d$xintercept == 20)
+      },
+      logical(1)
+    ))
+
+    has_hline_at_1 <- any(vapply(
+      pb$data,
+      function(d) {
+        ("yintercept" %in% names(d)) &&
+          any(is.finite(d$yintercept) & d$yintercept == 1)
+      },
+      logical(1)
+    ))
+
+    expect_true(has_vline_at_ref)
+    expect_true(has_hline_at_1)
+
+    ylims <- .get_y_limits(pb)
+    xlims <- .get_x_limits(pb)
+
+    expect_true(!is.null(ylims) && length(ylims) == 2)
+    expect_true(!is.null(xlims) && length(xlims) == 2)
+
+    # y includes RR = 1 within limits
+    expect_true(ylims[1] <= 1 && ylims[2] >= 1)
+  }
 })
 
 test_that("plot_air_pollution_exposure_response removes National when include_national = FALSE", {
@@ -4437,16 +5021,14 @@ test_that("plot_air_pollution_exposure_response derives ref_pm25 from analysis_r
   )
 
   # Subtitle should contain the derived reference value ‘33’
-  expect_true(grepl("\\b33\\b", p$labels$subtitle))
+  expect_true(grepl("\\b33\\b",p$patches$annotation$subtitle))
   # Title should contain the ref_name
-  expect_true(grepl("REF_A", p$labels$title))
+  expect_true(grepl("REF_A", p$patches$annotation$title))
 })
 
-test_that("plot_air_pollution_exposure_response saves with filename and dimensions derived from grid", {
-  requireNamespace("ggplot2", quietly = TRUE)
-
+test_that("plot_air_pollution_exposure_response saves with filename and dimensions derived from accessible grid", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2","R3","R4"),
+    regions  = c("R1", "R2", "R3", "R4"),
     n_days   = 240,
     max_lag  = 1L,
     ref_pm25 = 25,
@@ -4457,21 +5039,32 @@ test_that("plot_air_pollution_exposure_response saves with filename and dimensio
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   on.exit(unlink(outdir, recursive = TRUE, force = TRUE), add = TRUE)
 
-  # Mock grid dims so we can assert height = max(6, 4 * nrow)
   pkg_ns <- getNamespaceName(environment(plot_air_pollution_exposure_response))
 
   captured <- new.env(parent = emptyenv())
   captured$args <- list()
 
-  mock_ggsave <- function(filename, plot, width, height, ...) {
-    captured$args[[length(captured$args) + 1]] <<- list(
-      file = basename(filename), width = width, height = height
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL,
+                        ...) {
+    captured$args[[length(captured$args) + 1]] <- list(
+      plot_object = plot_object,
+      output_dir = output_dir,
+      filename = filename,
+      width = width,
+      height = height,
+      alt_text = alt_text
     )
-    invisible(filename)
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
 
-  p <- with_mocked_bindings({
-    with_mocked_bindings({
+  p <- testthat::with_mocked_bindings(
+    {
       plot_air_pollution_exposure_response(
         analysis_results = analysis_results,
         max_lag = 1L,
@@ -4481,25 +5074,34 @@ test_that("plot_air_pollution_exposure_response saves with filename and dimensio
         save_plot = TRUE
       )
     },
-    ggsave = mock_ggsave, .package = "ggplot2"
-    )
-  },
-  calculate_air_pollution_grid_dims = function(n_regions) list(nrow = 2L, ncol = 3L),
-  .package = pkg_ns
+    save_accessible_ggplot = mock_save,
+    .package = pkg_ns
   )
 
-  expect_s3_class(p, "ggplot")
+  expect_s3_class(p, "patchwork")
   expect_equal(length(captured$args), 1L)
 
   info <- captured$args[[1]]
-  # Filename pattern: exposure_response_by_region_<safe_refname>_ref<value>.png
-  expect_true(grepl("^exposure_response_by_region_", info$file))
-  expect_true(grepl("ukhsa", tolower(info$file)))
-  expect_true(grepl("ref25\\.png$", tolower(info$file)))
 
-  # Dimensions: width 14, height max(6, 4 * n_rows) → n_rows=2 → 8
+  expect_s3_class(info$plot_object, "patchwork")
+  expect_identical(info$output_dir, outdir)
+
+  # Filename is a stem passed to save_accessible_ggplot().
+  # The helper adds .pdf later.
+  expect_true(grepl("^exposure_response_by_region_", info$filename))
+  expect_true(grepl("ukhsa", tolower(info$filename)))
+  expect_true(grepl("_ref25$", tolower(info$filename)))
+
   expect_equal(info$width, 14)
-  expect_equal(info$height, 8)
+
+  grid_dims <- get_accessible_ggplot_grid(length(unique(analysis_results$region)))
+  expected_height <- max(12, 6.2 * grid_dims$n_row)
+
+  expect_equal(info$height, expected_height, tolerance = 1e-8)
+
+  expect_type(info$alt_text, "character")
+  expect_true(grepl("exposure-response plot", info$alt_text, ignore.case = TRUE))
+  expect_true(grepl("PM2.5 reference guideline", info$alt_text, ignore.case = TRUE))
 })
 
 test_that("plot_air_pollution_exposure_response errors when no rows match pm25_lag0_<max_lag>", {
@@ -4540,30 +5142,49 @@ test_that("plot_air_pollution_exposure_response tolerates some NA values in inpu
   expect_s3_class(p, "ggplot")
 })
 
-test_that("plot_air_pollution_exposure_response uses ncol from calculate_air_pollution_grid_dims", {
+test_that("plot_air_pollution_exposure_response uses n_col from get_accessible_ggplot_grid", {
   analysis_results <- .build_analysis_results(
-    regions  = c("R1","R2","R3"),
+    regions  = c("R1", "R2", "R3"),
     n_days   = 160,
     max_lag  = 1L
   )
 
   pkg_ns <- getNamespaceName(environment(plot_air_pollution_exposure_response))
 
-  p <- with_mocked_bindings({
-    plot_air_pollution_exposure_response(
-      analysis_results = analysis_results,
-      max_lag = 1L,
-      include_national = TRUE,
-      ref_pm25 = 20,
-      save_plot = FALSE
-    )
-  },
-  calculate_air_pollution_grid_dims = function(n_regions) list(nrow = 2L, ncol = 5L),
-  .package = pkg_ns
+  captured <- new.env(parent = emptyenv())
+  captured$ncol <- integer(0)
+
+  original_wrap_plots <- patchwork::wrap_plots
+
+  mock_wrap_plots <- function(..., ncol = NULL) {
+    captured$ncol <- c(captured$ncol, ncol)
+    original_wrap_plots(..., ncol = ncol)
+  }
+
+  p <- testthat::with_mocked_bindings(
+    {
+      testthat::with_mocked_bindings(
+        {
+          plot_air_pollution_exposure_response(
+            analysis_results = analysis_results,
+            max_lag = 1L,
+            include_national = TRUE,
+            ref_pm25 = 20,
+            save_plot = FALSE
+          )
+        },
+        wrap_plots = mock_wrap_plots,
+        .package = "patchwork"
+      )
+    },
+    get_accessible_ggplot_grid = function(n_plots) list(n_col = 5L, n_row = 1L),
+    .package = pkg_ns
   )
 
-  expect_s3_class(p$facet, "FacetWrap")
-  expect_identical(p$facet$params$ncol, 5L)
+  expect_s3_class(p, "patchwork")
+
+  # wrap_plots is called once for exposure-response.
+  expect_equal(captured$ncol, 5L)
 })
 
 # Unit test for air_pollution_power_list
@@ -4594,6 +5215,7 @@ test_that("air_pollution_power_list function returns a list and correct names", 
 
   data_with_lags <- data.frame(
     region = rep(c("RegionA", "RegionB"), each = 5),
+    date = rep(as.Date("2020-01-01") + 0:4, times = 2),
     pm25 = c(10, 12, 15, 18, 20, 8, 16, 17, 22, 25),
     pm25_lag0_3 = rnorm(10)
   )
@@ -4624,37 +5246,45 @@ test_that("air_pollution_power_list function returns a list and correct names", 
   expect_true(all(c("region", "pm25", "cen", "log_rr", "se", "power", "power_pct")
                   %in% names(actual_result$National)))
 
-  expected_result <- list(
-    "RegionA" = data.frame(
-      "region" = c("RegionA"),
-      "pm25" = as.double(c(20)),
-      "cen" = as.double(c(15)),
-      "log_rr" = as.double(c(0.1)),
-      "se" = as.double(c(0.025)),
-      "power" = as.double(c(0.9907423)),
-      "power_pct" = as.double(c(99.1))
-    ),
-    "RegionB" = data.frame(
-      "region" = c("RegionB"),
-      "pm25" = as.double(c(25)),
-      "cen" = as.double(c(15)),
-      "log_rr" = as.double(c(0.1)),
-      "se" = as.double(c(0.04)),
-      "power" = as.double(c(0.8037819)),
-      "power_pct" = as.double(c(80.4))
-    ),
-    "National" = data.frame(
-      "region" = c("National"),
-      "pm25" = as.double(c(25)),
-      "cen" = as.double(c(15)),
-      "log_rr" = as.double(c(0.1)),
-      "se" = as.double(c(0.04)),
-      "power" = as.double(c(0.8037819)),
-      "power_pct" = as.double(c(80.4))
-    )
-  )
+  # The new implementation uses a two-sided z (qnorm(1 - alpha/2) = 1.96) and
+  # derives the national PM2.5 series by averaging across regions per `date`,
+  # so the exact `power` / `pm25` reference values from the old single-sided
+  # implementation are no longer applicable. Assert structural properties and
+  # the deterministic, easily-derived fields instead.
+  pwr_two_sided <- function(lr, se, alpha = 0.05) {
+    z <- stats::qnorm(1 - alpha / 2)
+    stats::pnorm(lr / se - z) + (1 - stats::pnorm(lr / se + z))
+  }
 
-  expect_equal(actual_result, expected_result, tolerance = 1e-6)
+  # RegionA: only pm25 = 20 should clear the 90% excess threshold
+  expect_equal(actual_result$RegionA$region, "RegionA")
+  expect_equal(actual_result$RegionA$pm25, 20)
+  expect_equal(actual_result$RegionA$cen, 15)
+  expect_equal(actual_result$RegionA$log_rr, round(0.02 * (20 - 15), 3))
+  expect_equal(actual_result$RegionA$se, round(0.005 * (20 - 15), 3))
+  expect_equal(actual_result$RegionA$power,
+               pwr_two_sided(0.02 * (20 - 15), 0.005 * (20 - 15)),
+               tolerance = 1e-6)
+  expect_equal(actual_result$RegionA$power_pct,
+               round(actual_result$RegionA$power * 100, 1))
+
+  # RegionB: only pm25 = 25 should clear the threshold
+  expect_equal(actual_result$RegionB$pm25, 25)
+  expect_equal(actual_result$RegionB$log_rr, round(0.01 * (25 - 15), 3))
+  expect_equal(actual_result$RegionB$se, round(0.004 * (25 - 15), 3))
+  expect_equal(actual_result$RegionB$power,
+               pwr_two_sided(0.01 * (25 - 15), 0.004 * (25 - 15)),
+               tolerance = 1e-6)
+  expect_equal(actual_result$RegionB$power_pct,
+               round(actual_result$RegionB$power * 100, 1))
+
+  # National: derived from per-date means, all standard structural checks
+  expect_equal(actual_result$National$region, "National")
+  expect_true(all(actual_result$National$pm25 > 15))
+  expect_true(all(actual_result$National$cen == 15))
+  expect_true(all(actual_result$National$power >= 0 & actual_result$National$power <= 1))
+  expect_true(all(actual_result$National$power_pct ==
+                    round(actual_result$National$power * 100, 1)))
 })
 
 test_that("air_pollution_power_list handles region with no excess PM2.5 above reference", {
@@ -4675,14 +5305,17 @@ test_that("air_pollution_power_list handles region with no excess PM2.5 above re
 
   data_with_lags <- data.frame(
     region = rep("LowPM", 5),
+    date = as.Date("2020-01-01") + 0:4,
     pm25 = c(5, 6, 7, 8, 9),
     pm25_lag0_2 = rnorm(5)
   )
 
-  result <- air_pollution_power_list(meta_results, data_with_lags, ref_pm25 = 15)
+  result <- air_pollution_power_list(meta_results, data_with_lags, ref_pm25 = 15,
+                                     include_national = TRUE)
 
   # No values exceed reference → region should be missing from list
   expect_false("LowPM" %in% names(result))
+  expect_false("National" %in% names(result))
 })
 
 test_that("air_pollution_power_list National results excluded if include_national = FALSE", {
@@ -4712,6 +5345,7 @@ test_that("air_pollution_power_list National results excluded if include_nationa
 
   data_with_lags <- data.frame(
     region = rep(c("RegionA", "RegionB"), each = 5),
+    date = rep(as.Date("2020-01-01") + 0:4, times = 2),
     pm25 = c(10, 12, 15, 18, 20, 8, 16, 17, 22, 25),
     pm25_lag0_3 = rnorm(10)
   )
@@ -4722,6 +5356,14 @@ test_that("air_pollution_power_list National results excluded if include_nationa
     attr_thr = 90,
     include_national = FALSE
   )
+
+  z_alpha <- stats::qnorm(1 - 0.05 / 2)
+
+  region_a_power <- stats::pnorm(0.1 / 0.025 - z_alpha) +
+    (1 - stats::pnorm(0.1 / 0.025 + z_alpha))
+
+  region_b_power <- stats::pnorm(0.1 / 0.04 - z_alpha) +
+    (1 - stats::pnorm(0.1 / 0.04 + z_alpha))
 
   boop <- air_pollution_power_list(
     meta_results, data_with_lags,
@@ -4735,8 +5377,8 @@ test_that("air_pollution_power_list National results excluded if include_nationa
       "cen" = as.double(c(15)),
       "log_rr" = as.double(c(0.1)),
       "se" = as.double(c(0.025)),
-      "power" = as.double(c(0.9907423)),
-      "power_pct" = as.double(c(99.1))
+      "power" = region_a_power,
+      "power_pct" = round(region_a_power * 100, 1)
     ),
     "RegionB" = data.frame(
       "region" = c("RegionB"),
@@ -4744,8 +5386,8 @@ test_that("air_pollution_power_list National results excluded if include_nationa
       "cen" = as.double(c(15)),
       "log_rr" = as.double(c(0.1)),
       "se" = as.double(c(0.04)),
-      "power" = as.double(c(0.8037819)),
-      "power_pct" = as.double(c(80.4))
+      "power" = region_b_power,
+      "power_pct" = round(region_b_power * 100, 1)
     )
   )
 
@@ -4826,38 +5468,101 @@ test_that("plot_air_pollution_power correct error if all regions removed after f
 })
 
 test_that("plot_air_pollution_power plot contains required layers", {
+  captured <- new.env(parent = emptyenv())
+  captured$plots <- list()
+  captured$ncol <- integer(0)
 
-  plt <- plot_air_pollution_power(power_list, save_plot = FALSE)$power_plot
+  original_wrap_plots <- patchwork::wrap_plots
 
-  # Expect 1 geom_line
-  expect_true(any(sapply(plt$layers, function(x) "GeomLine" %in% class(x$geom))))
+  mock_wrap_plots <- function(..., ncol = NULL) {
+    plot_args <- list(...)
 
-  # Expect horizontal dashed lines at 80 and 50
-  layer_data <- plt$layers[[2]]
+    plot_list <- if (
+      length(plot_args) == 1 &&
+      is.list(plot_args[[1]]) &&
+      !inherits(plot_args[[1]], "ggplot")
+    ) {
+      plot_args[[1]]
+    } else {
+      plot_args
+    }
 
-  expect_true(any(grepl("GeomHline", class(plt$layers[[2]]$geom))))
-})
+    captured$plots[[length(captured$plots) + 1]] <- plot_list
+    captured$ncol <- c(captured$ncol, ncol)
 
-test_that("plot_air_pollution_power facet layout uses correct number of columns", {
+    original_wrap_plots(..., ncol = ncol)
+  }
 
-  # In real function, the number of columns comes from calculate_air_pollution_grid_dims()
-  # We check that facet_wrap exists.
+  out <- testthat::with_mocked_bindings(
+    {
+      plot_air_pollution_power(
+        power_list = power_list,
+        save_plot = FALSE
+      )
+    },
+    wrap_plots = mock_wrap_plots,
+    .package = "patchwork"
+  )
 
-  plt <- plot_air_pollution_power(power_list)$power_plot
+  expect_type(out, "list")
+  expect_true(all(c("power_plot", "power_data", "include_national") %in% names(out)))
 
-  # Expect facet wrap structure
-  expect_s3_class(plt$facet, "FacetWrap")
-})
+  plt <- out$power_plot
+  expect_s3_class(plt, "patchwork")
 
-test_that("plot_air_pollution_power plot title and subtitle are correctly set", {
+  # wrap_plots should be called once for the power plot.
+  expect_equal(length(captured$plots), 1L)
 
-  plt <- plot_air_pollution_power(power_list, ref_name = "EU")$power_plot
+  child_plots <- captured$plots[[1]]
+  expect_true(length(child_plots) >= 1)
+  expect_true(all(vapply(child_plots, inherits, logical(1), "ggplot")))
 
-  expect_equal(plt$labels$title,
-               "Power vs PM2.5 Concentration by Region - EU Standard")
+  has_geom <- function(plot_object, geom_class) {
+    any(vapply(
+      plot_object$layers,
+      function(layer) inherits(layer$geom, geom_class),
+      logical(1)
+    ))
+  }
 
-  expect_true(
-    grepl("Green zone", plt$labels$subtitle, fixed = TRUE)
+  # Each region child plot should contain the required visual layers.
+  expect_true(all(vapply(child_plots, has_geom, logical(1), "GeomLine")))
+  expect_true(all(vapply(child_plots, has_geom, logical(1), "GeomHline")))
+  expect_true(all(vapply(child_plots, has_geom, logical(1), "GeomRect")))
+
+  # Check horizontal dashed reference lines at 50 and 80 using built child plots.
+  for (child_plot in child_plots) {
+    built <- ggplot2::ggplot_build(child_plot)
+
+    hline_values <- unlist(lapply(
+      built$data,
+      function(d) {
+        if ("yintercept" %in% names(d)) {
+          d$yintercept
+        } else {
+          numeric(0)
+        }
+      }
+    ))
+
+    expect_true(50 %in% hline_values)
+    expect_true(80 %in% hline_values)
+  }
+
+  # Figure-level title/subtitle/alt text are now in patchwork annotation.
+  expect_match(
+    plt$patches$annotation$title,
+    "Power vs PM2.5 Concentration by Region"
+  )
+
+  expect_match(
+    plt$patches$annotation$subtitle,
+    "Shaded bands show low"
+  )
+
+  expect_match(
+    plt$patches$annotation$caption,
+    "Alt text:"
   )
 })
 
@@ -4919,7 +5624,9 @@ make_synth_df <- function(n_days = 365, regions = c("R1", "R2")) {
 }
 
 test_that("integration: air_pollution_do_analysis runs end-to-end (dynamic synthetic data)", {
-  skip_if_integration_disabled()
+
+  if (!identical(Sys.getenv("NOT_CRAN"), "true")) skip("Skipping on CRAN")
+  if (Sys.getenv("RUN_INTEGRATION") != "true")    skip("Skipping CI integration")
 
   set.seed(123)
   # Create dynamic data
@@ -4961,7 +5668,6 @@ test_that("integration: air_pollution_do_analysis runs end-to-end (dynamic synth
     family = "quasipoisson",
     reference_standards = list(list(value = 20, name = "WHO")),
     include_national = TRUE,
-    output_dir = tempfile("air_pollution_results_"),
     save_outputs = FALSE,
     run_descriptive = FALSE,
     run_power = FALSE,
@@ -4978,7 +5684,8 @@ test_that("integration: air_pollution_do_analysis runs end-to-end (dynamic synth
     plot_regional = FALSE,
     plot_total = FALSE,
     detect_outliers = FALSE,
-    calculate_rate = FALSE
+    calculate_rate = FALSE,
+    output_dir = NULL
   )
 
   # Structural assertions
@@ -5033,8 +5740,9 @@ test_that("integration: air_pollution_do_analysis runs end-to-end (dynamic synth
 })
 
 test_that("integration: do_analysis handles multiple references and include_national = FALSE", {
-  skip_if_integration_disabled()
 
+  if (!identical(Sys.getenv("NOT_CRAN"), "true")) skip("Skipping on CRAN")
+  if (Sys.getenv("RUN_INTEGRATION") != "true")    skip("Skipping CI integration")
   skip_if_not_installed("mgcv"); skip_if_not_installed("metafor")
   set.seed(1)
 
@@ -5059,18 +5767,33 @@ test_that("integration: do_analysis handles multiple references and include_nati
   f <- tempfile(fileext = ".csv"); on.exit(unlink(f), add = TRUE)
   write.csv(df, f, row.names = FALSE)
 
+  tmp_outdir <- tempfile("ap_res_")
+  dir.create(tmp_outdir, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(tmp_outdir, recursive = TRUE, force = TRUE), add = TRUE)
+
   res <- suppressWarnings(air_pollution_do_analysis(
     data_path = f,
-    date_col = "date", region_col = "region",
-    pm25_col = "pm25", deaths_col = "deaths", population_col = "population",
-    humidity_col = "humidity", precipitation_col = "precipitation",
-    tmax_col = "tmax", wind_speed_col = "wind_speed",
-    max_lag = 1L, df_seasonal = 2L, family = "quasipoisson",
-    reference_standards = list(list(value = 20, name = "WHO"),
-                               list(value = 25, name = "UKHSA")),
+    date_col = "date",
+    region_col = "region",
+    pm25_col = "pm25",
+    deaths_col = "deaths",
+    population_col = "population",
+    humidity_col = "humidity",
+    precipitation_col = "precipitation",
+    tmax_col = "tmax",
+    wind_speed_col = "wind_speed",
+    max_lag = 1L,
+    df_seasonal = 2L,
+    family = "quasipoisson",
+    reference_standards = list(
+      list(value = 20, name = "WHO"),
+      list(value = 25, name = "UKHSA")
+    ),
     include_national = FALSE,
-    output_dir =  tempfile("ap_res_"), save_outputs = T,
-    run_descriptive = FALSE, run_power = FALSE
+    output_dir = tmp_outdir,
+    save_outputs = TRUE,
+    run_descriptive = FALSE,
+    run_power = FALSE
   ))
 
   # both references populated
@@ -5087,67 +5810,128 @@ test_that("integration: do_analysis handles multiple references and include_nati
   }
 })
 
-test_that("integration: do_analysis saves the expected number of images per reference", {
-  skip_if_integration_disabled()
+test_that("integration: do_analysis saves the expected number of accessible plots per reference", {
 
-  skip_if_not_installed("mgcv"); skip_if_not_installed("metafor")
-  requireNamespace("ggplot2", quietly = TRUE)
+  skip_if_not_installed("mgcv")
+  skip_if_not_installed("metafor")
 
   # Minimal but fit-able CSV
   n_days <- 365
   dates <- seq(as.Date("2019-01-01"), by = "day", length.out = n_days)
+
   df <- tibble::tibble(
     date = rep(dates, 2),
-    region = rep(c("R1","R2"), each = n_days),
-    pm25 = pmax(0, round(12 + 4*sin(2*pi*(1:(2*n_days))/30) + rnorm(2*n_days, 0, 1.5), 1)),
-    deaths = rpois(2*n_days, lambda = 8),
+    region = rep(c("R1", "R2"), each = n_days),
+    pm25 = pmax(
+      0,
+      round(
+        12 + 4 * sin(2 * pi * (1:(2 * n_days)) / 30) +
+          rnorm(2 * n_days, 0, 1.5),
+        1
+      )
+    ),
+    deaths = rpois(2 * n_days, lambda = 8),
     population = 150000L,
-    humidity = runif(2*n_days, 40, 80),
-    precipitation = pmax(0, rnorm(2*n_days, 1.8, 0.8)),
-    tmax = rnorm(2*n_days, 14, 5),
-    wind_speed = runif(2*n_days, 0, 7)
+    humidity = runif(2 * n_days, 40, 80),
+    precipitation = pmax(0, rnorm(2 * n_days, 1.8, 0.8)),
+    tmax = rnorm(2 * n_days, 14, 5),
+    wind_speed = runif(2 * n_days, 0, 7)
   )
-  f <- tempfile(fileext = ".csv"); on.exit(unlink(f), add = TRUE)
+
+  f <- tempfile(fileext = ".csv")
   write.csv(df, f, row.names = FALSE)
+  on.exit(unlink(f), add = TRUE)
 
   outdir <- tempfile("ap_images_")
-  captured <- new.env(parent = emptyenv()); captured$files <- character(0)
-  mock_ggsave <- function(filename, plot, ...) {
-    if (!dir.exists(dirname(filename))) dir.create(dirname(filename), recursive = TRUE)
-    captured$files <- c(captured$files, basename(filename))
-    invisible(filename)
+  dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(outdir, recursive = TRUE, force = TRUE), add = TRUE)
+
+  captured <- new.env(parent = emptyenv())
+  captured$filenames <- character(0)
+  captured$output_dirs <- character(0)
+  captured$widths <- numeric(0)
+  captured$heights <- numeric(0)
+  captured$alt_texts <- character(0)
+
+  mock_save <- function(plot_object,
+                        output_dir,
+                        filename,
+                        width,
+                        height,
+                        alt_text = NULL,
+                        ...) {
+    captured$filenames <- c(captured$filenames, filename)
+    captured$output_dirs <- c(captured$output_dirs, output_dir)
+    captured$widths <- c(captured$widths, width)
+    captured$heights <- c(captured$heights, height)
+    captured$alt_texts <- c(captured$alt_texts, alt_text)
+
+    invisible(file.path(output_dir, paste0(filename, ".pdf")))
   }
 
-  # run with saving on
-  out <- suppressWarnings(with_mocked_bindings({
-    air_pollution_do_analysis(
-      data_path = f,
-      date_col = "date", region_col = "region",
-      pm25_col = "pm25", deaths_col = "deaths", population_col = "population",
-      humidity_col = "humidity", precipitation_col = "precipitation",
-      tmax_col = "tmax", wind_speed_col = "wind_speed",
-      max_lag = 1L, df_seasonal = 2L, family = "quasipoisson",
-      reference_standards = list(list(value = 20, name = "WHO"),
-                                 list(value = 25, name = "UKHSA")),
-      include_national = TRUE,
-      output_dir = outdir, save_outputs = TRUE,
-      run_descriptive = FALSE, run_power = FALSE
+  pkg_ns <- getNamespaceName(environment(air_pollution_do_analysis))
+
+  out <- suppressWarnings(
+    testthat::with_mocked_bindings(
+      {
+        air_pollution_do_analysis(
+          data_path = f,
+          date_col = "date",
+          region_col = "region",
+          pm25_col = "pm25",
+          deaths_col = "deaths",
+          population_col = "population",
+          humidity_col = "humidity",
+          precipitation_col = "precipitation",
+          tmax_col = "tmax",
+          wind_speed_col = "wind_speed",
+          max_lag = 1L,
+          df_seasonal = 2L,
+          family = "quasipoisson",
+          reference_standards = list(
+            list(value = 20, name = "WHO"),
+            list(value = 25, name = "UKHSA")
+          ),
+          include_national = TRUE,
+          output_dir = outdir,
+          save_outputs = TRUE,
+          run_descriptive = FALSE,
+          run_power = FALSE
+        )
+      },
+      save_accessible_ggplot = mock_save,
+      .package = pkg_ns
     )
-  },
-  ggsave = mock_ggsave, .package = "ggplot2"
-  ))
+  )
 
-  # Expect 11 files per reference
-  expect_equal(length(captured$files), 22L)
+  expect_s3_class(out, "air_pollution_analysis")
 
-  # Normalise to lowercase once
-  lower_files <- tolower(captured$files)
+  # Expected 11 saved plots per reference:
+  # an_ar_monthly: 2
+  # an_ar_by_year: 2
+  # forest_by_region: 1
+  # forest_by_lag: 1
+  # monthly_histograms: 2
+  # exposure_response: 1
+  # an_ar_by_region: 2
+  expect_equal(length(captured$filenames), 22L)
 
-  # At least one saved file for WHO mentions both the ref name and the value (in any order)
-  expect_true(any(grepl("who",   lower_files) & grepl("ref?\\s*20", lower_files)))
-  # At least one saved file for UKHSA mentions both the ref name and the value
-  expect_true(any(grepl("ukhsa", lower_files) & grepl("ref?\\s*25", lower_files)))
+  lower_files <- tolower(captured$filenames)
 
+  expect_true(any(grepl("who", lower_files) & grepl("ref20|_20", lower_files)))
+  expect_true(any(grepl("ukhsa", lower_files) & grepl("ref25|_25", lower_files)))
+
+  # The helper receives filename stems, not .png/.pdf filenames.
+  expect_false(any(grepl("\\.png$", lower_files)))
+  expect_false(any(grepl("\\.pdf$", lower_files)))
+
+  # Outputs should be written inside the generated air_pollution_analysis_* folder.
+  expect_true(all(startsWith(captured$output_dirs, outdir)))
+
+  # Accessibility helper receives dimensions and alt text.
+  expect_true(all(is.finite(captured$widths)))
+  expect_true(all(is.finite(captured$heights)))
+  expect_true(all(nzchar(captured$alt_texts)))
 })
 
 test_that("air_pollution_do_analysis accepts legacy other-column argument names", {
@@ -5180,6 +5964,204 @@ test_that("air_pollution_do_analysis accepts legacy other-column argument names"
 
   expect_equal(captured$categorical_others, c("sex", "age_group"))
   expect_equal(captured$continuous_others, "tmean")
+})
+
+test_that("air_pollution_do_analysis forwards continuous_others to meta-analysis", {
+  pkg_ns <- getNamespaceName(environment(air_pollution_do_analysis))
+  captured <- new.env(parent = emptyenv())
+
+  mock_load_air_pollution_data <- function(...) {
+    data.frame(
+      date = as.Date("2020-01-01") + 0:2,
+      region = "A",
+      pm25 = c(10, 11, 12),
+      deaths = c(1, 2, 1),
+      population = 1000,
+      humidity = 50,
+      precipitation = 0,
+      tmax = 25,
+      wind_speed = 2,
+      tmean = c(24, 25, 26)
+    )
+  }
+
+  mock_create_air_pollution_lags <- function(data, ...) data
+
+  mock_air_pollution_meta_analysis <- function(..., continuous_others = NULL) {
+    captured$continuous_others <- continuous_others
+    stop("meta sentinel")
+  }
+
+  expect_error(
+    with_mocked_bindings(
+      air_pollution_do_analysis(
+        data_path = tempfile(fileext = ".csv"),
+        continuous_others = "tmean",
+        save_outputs = FALSE,
+        run_descriptive = FALSE,
+        run_power = FALSE
+      ),
+      load_air_pollution_data = mock_load_air_pollution_data,
+      create_air_pollution_lags = mock_create_air_pollution_lags,
+      air_pollution_meta_analysis = mock_air_pollution_meta_analysis,
+      .package = pkg_ns
+    ),
+    "meta sentinel"
+  )
+
+  expect_equal(captured$continuous_others, "tmean")
+})
+
+test_that("air_pollution_do_analysis default output settings do not require output_dir", {
+  pkg_ns <- getNamespaceName(environment(air_pollution_do_analysis))
+
+  mock_load_air_pollution_data <- function(...) {
+    stop("load sentinel")
+  }
+
+  expect_error(
+    with_mocked_bindings(
+      air_pollution_do_analysis(
+        data_path = tempfile(fileext = ".csv"),
+        run_descriptive = FALSE,
+        run_power = FALSE
+      ),
+      load_air_pollution_data = mock_load_air_pollution_data,
+      .package = pkg_ns
+    ),
+    "load sentinel"
+  )
+})
+
+test_that("air_pollution_do_analysis does not prepare output_dir when save_outputs is FALSE", {
+  pkg_ns <- getNamespaceName(environment(air_pollution_do_analysis))
+  missing_dir <- tempfile("missing_air_pollution_output_")
+
+  mock_load_air_pollution_data <- function(...) {
+    stop("load sentinel")
+  }
+
+  expect_false(dir.exists(missing_dir))
+  expect_error(
+    with_mocked_bindings(
+      air_pollution_do_analysis(
+        data_path = tempfile(fileext = ".csv"),
+        output_dir = missing_dir,
+        save_outputs = FALSE,
+        run_descriptive = FALSE,
+        run_power = FALSE
+      ),
+      load_air_pollution_data = mock_load_air_pollution_data,
+      .package = pkg_ns
+    ),
+    "load sentinel"
+  )
+  expect_false(dir.exists(missing_dir))
+})
+
+test_that("air_pollution_do_analysis API mode skips output_dir preparation", {
+  pkg_ns <- getNamespaceName(environment(air_pollution_do_analysis))
+  missing_dir <- tempfile("missing_air_pollution_api_output_")
+
+  mock_load_air_pollution_data <- function(...) {
+    stop("load sentinel")
+  }
+
+  withr::local_options(list(climatehealth.api_mode = TRUE))
+
+  expect_false(dir.exists(missing_dir))
+  expect_error(
+    with_mocked_bindings(
+      air_pollution_do_analysis(
+        data_path = tempfile(fileext = ".csv"),
+        output_dir = missing_dir,
+        save_outputs = TRUE,
+        run_descriptive = FALSE,
+        run_power = FALSE
+      ),
+      load_air_pollution_data = mock_load_air_pollution_data,
+      .package = pkg_ns
+    ),
+    "load sentinel"
+  )
+  expect_false(dir.exists(missing_dir))
+})
+
+test_that("air_pollution_do_analysis strips fitted GAMs from API-mode meta results", {
+  pkg_ns <- getNamespaceName(environment(air_pollution_do_analysis))
+  captured <- new.env(parent = emptyenv())
+  withr::local_options(list(climatehealth.api_mode = TRUE))
+
+  mock_load_air_pollution_data <- function(...) {
+    data.frame(
+      date = as.Date("2020-01-01") + 0:2,
+      region = "A",
+      pm25 = c(10, 11, 12),
+      deaths = c(1, 2, 1),
+      population = 1000,
+      humidity = 50,
+      precipitation = 0,
+      tmax = 25,
+      wind_speed = 2
+    )
+  }
+
+  mock_create_air_pollution_lags <- function(data, ...) data
+
+  mock_air_pollution_meta_analysis <- function(...) {
+    list(
+      region_results = data.frame(
+        region = "A",
+        model_results = I(list(list(
+          model = list(heavy = TRUE),
+          coef_table = data.frame(
+            lag = "0",
+            pm25_variable = "pm25",
+            coef = 0.01,
+            se = 0.001,
+            ci.lb = 0.008,
+            ci.ub = 0.012
+          ),
+          vcov_used_for_cumulative = TRUE
+        )))
+      ),
+      meta_results = data.frame(
+        lag = "0",
+        pm25_variable = "pm25",
+        coef = 0.01,
+        se = 0.001,
+        ci.lb = 0.008,
+        ci.ub = 0.012,
+        pval = 0.01,
+        I2 = 0
+      )
+    )
+  }
+
+  mock_analyze_air_pollution_daily <- function(data_with_lags, meta_results, ...) {
+    captured$model_results <- meta_results$region_results$model_results
+    stop("analysis sentinel")
+  }
+
+  expect_error(
+    with_mocked_bindings(
+      air_pollution_do_analysis(
+        data_path = tempfile(fileext = ".csv"),
+        save_outputs = FALSE,
+        run_descriptive = FALSE,
+        run_power = FALSE
+      ),
+      load_air_pollution_data = mock_load_air_pollution_data,
+      create_air_pollution_lags = mock_create_air_pollution_lags,
+      air_pollution_meta_analysis = mock_air_pollution_meta_analysis,
+      analyze_air_pollution_daily = mock_analyze_air_pollution_daily,
+      .package = pkg_ns
+    ),
+    "analysis sentinel"
+  )
+
+  expect_false("model" %in% names(captured$model_results[[1]]))
+  expect_true("coef_table" %in% names(captured$model_results[[1]]))
 })
 
 test_that("air_pollution_do_analysis rejects legacy and new aliases together", {

@@ -59,7 +59,8 @@ test_that("Test hc_read_data", {
       month = as.factor(lubridate::month(date)),
       dow   = as.factor(lubridate::wday(date, label = TRUE)),
       region = as.factor(.data$region)
-    )
+    ) %>%
+    dplyr::arrange(region, date)
 
   # Create control list (alphabetical by region)
   control_list <- split(control_df[order(control_df$region), , drop = FALSE], control_df$region)
@@ -583,19 +584,25 @@ test_that("hc_quasipoisson_dlnm fits DLNM GLMs correctly with controls", {
     expect_true(grepl(" dow", f_str, fixed = TRUE))
     expect_true(grepl("splines::ns\\(date, df = 8 \\* length\\(unique\\(year\\)\\)\\)", f_str))
 
-    # Control variables are included as raw terms (not splines) in this function
-    terms_rhs <- attr(terms(m), "term.labels")
-    expect_true("humidity" %in% terms_rhs)
-    expect_true("pollution" %in% terms_rhs)
-
+    # Control variables are included as spline-created terms
+    trm <- attr(terms(m), "term.labels")
+    expect_true("humidity_ns" %in% trm)
+    expect_true("pollution_ns" %in% trm)
 
     # Terms contain expected labels
-    trm <- attr(terms(m), "term.labels")
+
     expect_true(any(grepl("^cb", trm)))
     expect_true(any(grepl("^dow", trm)))
     expect_true(any(grepl("^splines::ns\\(date", trm)))
-    expect_true("humidity" %in% trm)
-    expect_true("pollution" %in% trm)
+    expect_true("humidity_ns" %in% trm)
+    expect_true("pollution_ns" %in% trm)
+
+    # Coefficients should include expanded spline basis terms
+    coef_names <- names(coef(m))
+
+    expect_true(any(grepl("^humidity_ns", coef_names)))
+    expect_true(any(grepl("^pollution_ns", coef_names)))
+
   }
 })
 
@@ -633,7 +640,7 @@ test_that("hc_quasipoisson_dlnm respects custom dfseas in the date spline", {
   f_str <- paste(deparse(formula(m)), collapse = " ")
 
   terms_rhs <- attr(terms(m), "term.labels")
-  expect_true("humidity" %in% terms_rhs)
+  expect_true("humidity_ns" %in% terms_rhs)
   expect_true(grepl("splines::ns\\(date, df = 6 \\* length\\(unique\\(year\\)\\)\\)", f_str))
   expect_equal(m$family$family, "quasipoisson")
 })
@@ -2583,8 +2590,9 @@ test_that("hc_save_results writes all expected CSV files and validates content",
 })
 
 test_that("integration: temp_mortality_do_analysis runs end-to-end (dynamic synthetic data)", {
-  skip_if_integration_disabled()
 
+  if (!identical(Sys.getenv("NOT_CRAN"), "true")) skip("Skipping on CRAN")
+  if (Sys.getenv("RUN_INTEGRATION") != "true")    skip("Skipping CI integration")
   set.seed(42)
 
   # Generate 2-region daily data with continuity and variability
@@ -2652,6 +2660,7 @@ test_that("integration: temp_mortality_do_analysis runs end-to-end (dynamic synt
     dependent_col = "deaths",
     population_col = "population",
     independent_cols = c("hum", "sun", "rainfall"),
+    df_control = 3,
     control_cols = NULL,
     var_fun = "bs",
     var_degree = 2,
@@ -2670,7 +2679,20 @@ test_that("integration: temp_mortality_do_analysis runs end-to-end (dynamic synt
 
   # Structure checks: ensure contract is met
   expect_type(result, "list")
-  expected_names <- c("rr_results", "an_ar_results", "annual_an_ar_results", "monthly_an_ar_results")
+
+  expected_names <- c(
+    "qaic_results",
+    "qaic_summary",
+    "vif_results",
+    "vif_summary",
+    "meta_test_res",
+    "power_list_high",
+    "power_list_low",
+    "rr_results",
+    "res_attr_tot",
+    "attr_yr_list",
+    "attr_mth_list"
+  )
   expect_true(all(expected_names %in% names(result)))
 
   # rr_results: basic schema & content (non-brittle subset)
@@ -2679,16 +2701,16 @@ test_that("integration: temp_mortality_do_analysis runs end-to-end (dynamic synt
   expect_true(nrow(rr) > 0, info = "rr_results unexpectedly empty")
   expect_true(all(c("Area", "RR", "RR_lower_CI", "RR_upper_CI") %in% names(rr)))
 
-  # an_ar_results (overall totals)
-  tot <- result$an_ar_results
+  # res_attr_tot (overall totals)
+  tot <- result$res_attr_tot
   expect_s3_class(tot, "data.frame")
   expect_true(nrow(tot) >= length(regions), info = "overall results should include per-region rows")
   expect_true(all(c("region", "population", "deaths") %in% names(tot)))
   expect_true(any(c("af_heat", "ar_heat", "an_heat") %in% names(tot)))  # heat metrics present
   expect_true(any(c("af_cold", "ar_cold", "an_cold") %in% names(tot)))  # cold metrics present
 
-  # annual_an_ar_results: list of data frames keyed by region
-  yr_list <- result$annual_an_ar_results
+  # attr_yr_list: list of data frames keyed by region
+  yr_list <- result$attr_yr_list
   expect_type(yr_list, "list")
   expect_true(all(vapply(yr_list, is.data.frame, logical(1))))
   # At least one data frame should include 'year' and some metric columns
@@ -2698,8 +2720,8 @@ test_that("integration: temp_mortality_do_analysis runs end-to-end (dynamic synt
     expect_true(any(c("af_heat", "ar_heat", "an_heat", "af_cold", "ar_cold", "an_cold") %in% names(sample_df)))
   }
 
-  # monthly_an_ar_results: list of data frames keyed by region, with 'month' names
-  mth_list <- result$monthly_an_ar_results
+  # attr_mth_list: list of data frames keyed by region, with 'month' names
+  mth_list <- result$attr_mth_list
   expect_type(mth_list, "list")
   expect_true(all(vapply(mth_list, is.data.frame, logical(1))))
   if (length(mth_list) > 0) {
@@ -2710,4 +2732,106 @@ test_that("integration: temp_mortality_do_analysis runs end-to-end (dynamic synt
       expect_true(all(sample_df$month %in% month.name))
     }
   }
+
+  # Power outputs
+  expect_type(result$power_list_high, "list")
+  expect_type(result$power_list_low, "list")
+
+})
+
+test_that("integration: temp_mortality descriptive stats runs and outputs files", {
+
+  if (!identical(Sys.getenv("NOT_CRAN"), "true")) skip("Skipping on CRAN")
+  if (Sys.getenv("RUN_INTEGRATION") != "true")    skip("Skipping CI integration")
+
+  set.seed(42)
+
+  # synthetic data
+  n_days_per_region <- 500
+  regions <- c("Region 1", "Region 2")
+  start_date <- as.Date("2000-01-01")
+
+  make_region <- function(region_name) {
+    set.seed(126)
+
+    dates <- seq(start_date, by = "day", length.out = n_days_per_region)
+    day_ix <- seq_len(n_days_per_region)
+
+    tmean <- 10 + 8 * sin(2 * pi * day_ix / 365) + rnorm(n_days_per_region, sd = 4)
+    tmean <- pmax(pmin(tmean, 25), -5)
+
+    hum <- pmax(pmin(80 + rnorm(n_days_per_region, sd = 6), 95), 70)
+    rainfall <- pmax(rnorm(n_days_per_region, mean = 3.5, sd = 2.0), 0)
+    sun <- pmax(rnorm(n_days_per_region, mean = 2.5, sd = 1.2), 0)
+
+    pop <- if (region_name == "Region 1") 2600000L else 6800000L
+
+    lambda <- exp(-0.1 + 0.03 * tmean)
+    deaths <- rpois(n_days_per_region, lambda = lambda)
+
+    data.frame(
+      date = dates,
+      region = region_name,
+      tmean = round(tmean, 2),
+      hum = round(hum, 2),
+      sun = round(sun, 2),
+      rainfall = round(rainfall, 2),
+      population = pop,
+      deaths = deaths
+    )
+  }
+
+  df <- do.call(rbind, lapply(regions, make_region))
+
+  tmp_file <- tempfile(fileext = ".csv")
+  write.csv(df, tmp_file, row.names = FALSE)
+  on.exit(unlink(tmp_file), add = TRUE)
+
+  # temp output dir
+  base_out <- tempfile("temp_mortality_out_")
+  dir.create(base_out)
+
+  # run pipeline
+  result <- suppress_plot(suppressWarnings(
+    temp_mortality_do_analysis(
+      data_path = tmp_file,
+      date_col = "date",
+      region_col = "region",
+      temperature_col = "tmean",
+      dependent_col = "deaths",
+      population_col = "population",
+      independent_cols = c("hum", "sun", "rainfall"),
+      run_descriptive = TRUE,
+      output_folder_path = base_out,
+      var_per = c(50),
+      lagn = 2,
+      lagnk = 1,
+      dfseas = 6,
+      save_fig = FALSE,
+      save_csv = FALSE
+    )
+  ))
+
+  # validate output directory
+  created_dirs <- list.dirs(base_out, recursive = FALSE)
+  expect_true(length(created_dirs) > 0,
+              info = "No analysis directory created")
+
+  latest_dir <- created_dirs[which.max(file.info(created_dirs)$mtime)]
+
+  # check descriptive folder
+  desc_dir <- file.path(latest_dir, "descriptive_stats")
+  expect_true(dir.exists(desc_dir),
+              info = "descriptive_stats folder not created")
+
+  # check files exist
+  files <- list.files(desc_dir, recursive = TRUE)
+  expect_true(length(files) > 0,
+              info = "No descriptive stats outputs created")
+
+  # pipeline outputs still returned
+  expect_true("rr_results" %in% names(result))
+  expect_s3_class(result$rr_results, "data.frame")
+  expect_gt(nrow(result$rr_results), 0)
+
 })

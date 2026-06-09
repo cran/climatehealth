@@ -2,9 +2,8 @@
 % Please edit documentation in R/malaria.R
 \name{malaria_do_analysis}
 \alias{malaria_do_analysis}
-\title{Code for calculating Malaria disease cases attributable to extreme rainfall
-and extreme temperature
-Run Full Malaria-Climate Analysis Pipeline}
+\title{Full analysis for the 'malaria incidence attributable to extreme temperature
+and extreme rainfall' indicator}
 \usage{
 malaria_do_analysis(
   health_data_path,
@@ -41,7 +40,16 @@ malaria_do_analysis(
   save_csv = FALSE,
   save_model = FALSE,
   save_fig = FALSE,
-  output_dir = NULL
+  output_dir = NULL,
+  run_descriptive = FALSE,
+  plot_corr_matrix = TRUE,
+  correlation_method = "pearson",
+  plot_dist = TRUE,
+  plot_na_counts = TRUE,
+  plot_scatter = TRUE,
+  plot_box = TRUE,
+  plot_regional = TRUE,
+  detect_outliers = TRUE
 )
 }
 \arguments{
@@ -137,6 +145,27 @@ Defaults to \code{TRUE}.}
 
 \item{output_dir}{Character. Directory where output files (plots, datasets, maps)
 are saved. Defaults to \code{NULL}.}
+
+\item{run_descriptive}{Logical. Whether to run descriptive statistics. Default FALSE.}
+
+\item{plot_corr_matrix}{Logical. Plot correlation matrix. Default TRUE.}
+
+\item{correlation_method}{Character. Correlation method for corr matrix
+(e.g.,"pearson", "spearman"). Default "pearson".}
+
+\item{plot_dist}{Logical. Plot distributions (hist/density) for key variables.
+Default TRUE.}
+
+\item{plot_na_counts}{Logical. Plot missingness/NA counts. Default TRUE.}
+
+\item{plot_scatter}{Logical. Plot scatter plots for key pairs. Default TRUE.}
+
+\item{plot_box}{Logical. Plot boxplots by region/season where applicable.
+Default TRUE.}
+
+\item{plot_regional}{Logical. Plot regional summaries. Default TRUE.}
+
+\item{detect_outliers}{Logical. Flag potential outliers in descriptive workflow.}
 }
 \value{
 A named list containing:
@@ -154,7 +183,7 @@ number, fraction, and rate.
 }
 }
 \description{
-The \code{Malaria_do_analysis()} function executes the complete workflow for analyzing
+The \code{malaria_do_analysis()} function executes the complete workflow for analyzing
 the association between malaria cases and climate variables. It integrates
 health, climate, and spatial data; fits spatio-temporal models using INLA;
 and generates a suite of diagnostic and inferential outputs, including plots

@@ -31,23 +31,20 @@ hc_read_data <- function(input_csv_path,
   # Load the input dataset
   df <- read_input_data(input_csv_path)
 
-  # Format the geography column. If geog is missing, then assume geographies
-  # are aggregated or only single input geography.
-  if (is.null(region_col)) {
-    df <- df %>%
-      dplyr::mutate(geog = "aggregated")
-  }
   # subset needed cols
   needed_cols <- c(
     dependent_col,
     date_col,
-    region_col,
     temperature_col,
     population_col
   )
-  standard_cols <- c(
-    "deaths", "date", "region", "temp", "population"
-  )
+
+  if (!is.null(region_col)) {
+    needed_cols <- c(needed_cols, region_col)
+  }
+
+  standard_cols <- c("deaths", "date", "temp", "population", "region")
+
   for (i in seq_along(standard_cols)) {
     std_col <- standard_cols[i]
     need_col <- needed_cols[i]
@@ -55,22 +52,37 @@ hc_read_data <- function(input_csv_path,
       df[[std_col]] <- NULL
     }
   }
-  # Rename the columns
+
+  # Rename mandatory columns
   df <- df %>%
     dplyr::rename(
       deaths = all_of(dependent_col),
       date = all_of(date_col),
-      region = all_of(region_col),
       temp = all_of(temperature_col),
       population = all_of(population_col)
-    ) %>%
+    )
+
+  # Rename region only if it was provided
+  if (!is.null(region_col)) {
+    df <- df %>%
+      dplyr::rename(
+        region = all_of(region_col)
+      )
+  } else {
+    df <- df %>%
+      dplyr::mutate(region = "Overall")
+  }
+
+  # Standard transformations
+  df <- df %>%
     dplyr::mutate(
       date = as.Date(date, tryFormats = c("%d/%m/%Y", "%Y-%m-%d")),
-      year = as.factor(lubridate::year(date)),
-      month = as.factor(lubridate::month(date)),
-      dow = as.factor(lubridate::wday(date, label = TRUE)),
+      year = as.factor(lubridate::year(.data$date)),
+      month = as.factor(lubridate::month(.data$date)),
+      dow = as.factor(lubridate::wday(.data$date, label = TRUE)),
       region = as.factor(.data$region)
-    )
+    ) %>%
+    dplyr::arrange(.data$region, .data$date)
 
   # Reformat data and fill NaNs
   df <- reformat_data(df,
@@ -256,7 +268,7 @@ hc_model_combo_res <- function(df_list,
 
   # Combine results into a single data frame
   qaic_results <- do.call(rbind, qaic_results)
-  # Sort by geog and QAIC
+  # Sort by geog and formula
   qaic_results <- qaic_results[order(qaic_results$geography,
                                      qaic_results$formula), ]
 
@@ -351,6 +363,8 @@ hc_model_validation <- function(df_list,
   vif_summary <- NULL
   adf_results <- NULL
 
+  cols <- get_accessible_palette()
+
   # QAIC results to csv
   model_combo <- hc_model_combo_res(
     df_list = df_list,
@@ -360,14 +374,16 @@ hc_model_validation <- function(df_list,
   )
   qaic_results <- model_combo[[1]]
   residuals_list <- model_combo[[2]]
-  if (save_csv == TRUE) {
-    dir.create(file.path(
-      output_folder_path, "model_validation"
-    ), recursive = TRUE, showWarnings = FALSE)
 
-    write.csv(qaic_results, file = file.path(
-      output_folder_path, "model_validation", "qaic_results.csv"
-    ), row.names = FALSE)
+  if (save_csv == TRUE) {
+    dir.create(file.path(output_folder_path, "model_validation"),
+               recursive = TRUE, showWarnings = FALSE)
+
+    write.csv(
+      qaic_results,
+      file = file.path(output_folder_path, "model_validation", "qaic_results.csv"),
+      row.names = FALSE
+    )
   }
 
   # VIF results to csv by geog
@@ -380,9 +396,11 @@ hc_model_validation <- function(df_list,
     vif_results <- dplyr::bind_rows(vif_list, .id = "Geography")
 
     if (save_csv == TRUE) {
-      write.csv(vif_results, file = file.path(
-        output_folder_path, "model_validation", "vif_results.csv"
-      ), row.names = FALSE)
+      write.csv(
+        vif_results,
+        file = file.path(output_folder_path, "model_validation", "vif_results.csv"),
+        row.names = FALSE
+      )
     }
   } else {
     vif_results <- NULL
@@ -390,93 +408,110 @@ hc_model_validation <- function(df_list,
 
   # ADF test results to csv by geog
   adf_list <- hc_adf(df_list = df_list)
-
   adf_results <- dplyr::bind_rows(adf_list, .id = "Geography")
 
   if (save_csv == TRUE) {
-    write.csv(adf_results, file = file.path(
-      output_folder_path, "model_validation", "adf_results.csv"
-    ), row.names = FALSE)
+    write.csv(
+      adf_results,
+      file = file.path(output_folder_path, "model_validation", "adf_results.csv"),
+      row.names = FALSE
+    )
   }
 
   # Produce and write csv of mean QAIC and VIF results
   if (length(df_list) > 1) {
     qaic_summary <- qaic_results %>%
-      group_by(formula) %>%
-      summarise(
+      dplyr::group_by(formula) %>%
+      dplyr::summarise(
         mean_disp = mean(.data$disp),
-        mean_qaic = mean(.data$qaic)
+        mean_qaic = mean(.data$qaic),
+        .groups = "drop"
       )
 
     if (save_csv == TRUE) {
-      write.csv(qaic_summary, file = file.path(
-        output_folder_path, "model_validation", "qaic_summary.csv"
-      ), row.names = FALSE)
+      write.csv(
+        qaic_summary,
+        file = file.path(output_folder_path, "model_validation", "qaic_summary.csv"),
+        row.names = FALSE
+      )
     }
 
     if (!is.null(vif_results)) {
       vif_summary <- vif_results %>%
         dplyr::group_by(.data$variable) %>%
-        dplyr::summarise(mean_vif = mean(.data$vif, na.rm = TRUE))
+        dplyr::summarise(mean_vif = mean(.data$vif, na.rm = TRUE), .groups = "drop")
 
       if (save_csv == TRUE) {
-        write.csv(vif_summary, file = file.path(
-          output_folder_path, "model_validation", "vif_summary.csv"
-        ), row.names = FALSE)
+        write.csv(
+          vif_summary,
+          file = file.path(output_folder_path, "model_validation", "vif_summary.csv"),
+          row.names = FALSE
+        )
       }
     }
   } else {
-    qaic_summary <- vif_summary <- NULL
+    qaic_summary <- NULL
+    vif_summary <- NULL
   }
 
-  # Model validation plots
-  if (save_fig == TRUE) {
-    # Shorten the labels to a fixed length
-    short_labels <- sapply(as.character(names(df_list)), function(x) {
-      x_clean <- gsub(" ", "", x) # remove all spaces
-      if (nchar(x_clean) > 10) {
-        substr(x_clean, 1, 10) # truncate to first 10 characters
-      } else {
-        x_clean
-      }
-    })
-
-    # Assign names to the list
-    named_label_list <- as.list(short_labels)
-    names(named_label_list) <- names(df_list)
+  # The remaining work in this function is diagnostic plotting only.  The
+  # caller (temp_mortality_do_analysis) consumes the qaic / vif / adf
+  # outputs computed above, so when save_fig is FALSE we short-circuit to
+  # avoid "figure margins too large" errors in headless / API contexts and
+  # to avoid wasted work.
+  if (!isTRUE(save_fig)) {
+    return(list(
+      qaic_results,
+      qaic_summary,
+      vif_results,
+      vif_summary,
+      adf_results
+    ))
   }
 
+  # Label list for saved file names
+  short_labels <- sapply(as.character(names(df_list)), function(x) {
+    x_clean <- gsub(" ", "", x)
+    if (nchar(x_clean) > 10) {
+      substr(x_clean, 1, 10)
+    } else {
+      x_clean
+    }
+  })
+
+  named_label_list <- as.list(short_labels)
+  names(named_label_list) <- names(df_list)
+
+  # Determine whether to sample residuals for scatter/qq
   if (nrow(do.call(rbind, do.call(rbind, residuals_list))) > 100000) {
     sample_check <- TRUE
   } else {
     sample_check <- FALSE
   }
 
+  # plotting loop by geography
   for (geog in names(df_list)) {
     geog_data <- df_list[[geog]]
     formula_list <- residuals_list[[geog]]
 
     if (save_fig == TRUE) {
-      # named_label_list is only defined when save_fig == TRUE (line 424)
       named_label <- named_label_list[[geog]]
       geog_folder <- gsub(pattern = " ", replacement = "_", x = geog)
 
-      output_folder_main <- file.path(output_folder_path,
-                                      "model_validation",
-                                      geog_folder)
+      output_folder_main <- file.path(
+        output_folder_path,
+        "model_validation",
+        geog_folder
+      )
       dir.create(output_folder_main, recursive = TRUE, showWarnings = FALSE)
+    }
 
-      grid <- c(min(length(formula_list), 3),
-                ceiling(length(formula_list) / 3))
-      output_path <- paste0(output_folder_main, "/",
-                            named_label,
-                            "_residuals_timeseries.pdf")
-      pdf(output_path, width = grid[1] * 5.5, height = grid[2] * 4.5)
-      pdf_dev_id <- grDevices::dev.cur()
-      on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                         list(ID = pdf_dev_id)), add = TRUE)
 
-      par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0))
+    # 1. Residuals vs Date
+
+    if (save_fig == TRUE) {
+      output_path <- file.path(output_folder_main, paste0(named_label, "_residuals_timeseries.pdf"))
+      open_diag_pdf(output_path, length(formula_list))
     }
 
     for (i in names(formula_list)) {
@@ -485,56 +520,52 @@ hc_model_validation <- function(df_list,
         y = formula_list[[i]]$residuals,
         ylim = c(-5, 10),
         pch = 19,
-        cex = 0.2,
-        col = "#0A2E4D",
+        cex = 0.3,
+        col = cols$deep_water,
         main = unique(formula_list[[i]]$formula),
         ylab = "Deviance residuals",
         xlab = "Date"
       )
 
-      abline(h = 0, lty = 2, lwd = 2)
-
-      if (save_fig == TRUE) {
-        title <- paste0("Deviance Residuals by Date: ", geog)
-        mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-      }
+      abline(h = 0, lty = 2, lwd = 2, col = cols$text)
     }
 
     if (save_fig == TRUE) {
-      dev.off()
+      close_diag_pdf(
+        title = paste0("Deviance residuals by date, ", geog),
+        subtitle = "Each panel shows one model specification.",
+        alt_text = paste(
+          "Alt text: Multi-panel scatter plot of deviance residuals against date for", geog, ".",
+          "Each panel corresponds to a model specification.",
+          "A dashed horizontal line marks zero residual."
+        )
+      )
     }
 
+    # Sampling for fitted and QQ plots
     if (sample_check == TRUE) {
       all_residuals <- do.call(rbind, formula_list)
 
       if (!is.null(seed)) {
         set.seed(seed)
       }
+
       sampled_residuals <- all_residuals %>%
-        group_by(.data$formula) %>%
-        sample_frac(0.2) %>%
-        ungroup()
+        dplyr::group_by(.data$formula) %>%
+        dplyr::sample_frac(0.2) %>%
+        dplyr::ungroup()
 
       new_res_list <- split(sampled_residuals, sampled_residuals$formula)
-
       sample_title <- " (20% sample)"
     } else {
       new_res_list <- formula_list
       sample_title <- ""
     }
 
+    # 2. Residuals vs Fitted
     if (save_fig == TRUE) {
-      grid <- c(min(length(formula_list), 3),
-                ceiling(length(new_res_list) / 3))
-      output_path <- paste0(output_folder_main,
-                            "/", named_label,
-                            "_residuals_fitted.pdf")
-      pdf(output_path, width = grid[1] * 5.5, height = grid[2] * 4.5)
-      pdf_dev_id <- grDevices::dev.cur()
-      on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                         list(ID = pdf_dev_id)), add = TRUE)
-
-      par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0))
+      output_path <- file.path(output_folder_main, paste0(named_label, "_residuals_fitted.pdf"))
+      open_diag_pdf(output_path, length(new_res_list))
     }
 
     for (i in names(new_res_list)) {
@@ -542,98 +573,100 @@ hc_model_validation <- function(df_list,
         x = jitter(new_res_list[[i]]$fitted, amount = 0.5),
         y = jitter(new_res_list[[i]]$residuals, amount = 0.5),
         pch = 19,
-        cex = 0.2,
-        col = "#0A2E4D",
+        cex = 0.3,
+        col = cols$deep_water,
         main = unique(new_res_list[[i]]$formula),
         ylab = "Deviance residuals",
         xlab = "Fitted values"
       )
 
-      abline(h = 0, lty = 2, lwd = 2)
-
-      if (save_fig == TRUE) {
-        title <- paste0("Deviance Residuals by Fitted Values: ",
-                        geog, sample_title)
-        mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-      }
+      abline(h = 0, lty = 2, lwd = 2, col = cols$text)
     }
 
     if (save_fig == TRUE) {
+      run_accessible_pdf_plot(
+        title = paste0("Deviance residuals by fitted values,\n", geog, sample_title),
+        subtitle = "Each panel shows one model specification.",
+        line_title = 3.4,
+        line_subtitle = 1.6
+      )
+      add_accessible_alt_text(alt_text = paste(
+        "Alt text: Multi-panel scatter plot of deviance residuals against fitted values for", geog, sample_title, ".",
+        "Each panel corresponds to a model specification.",
+        "A dashed horizontal line marks zero residual."
+      ), width = 120)
       dev.off()
     }
 
-    if (save_fig == TRUE) {
-      grid <- c(min(length(formula_list), 3),
-                ceiling(length(new_res_list) / 3))
-      output_path <- paste0(output_folder_main, "/",
-                            named_label, "_qq_plot.pdf")
-      pdf(output_path, width = grid[1] * 5.5, height = grid[2] * 4.5)
-      pdf_dev_id <- grDevices::dev.cur()
-      on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                         list(ID = pdf_dev_id)), add = TRUE)
 
-      par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0))
+    # 3. QQ Plot
+    if (save_fig == TRUE) {
+      output_path <- file.path(output_folder_main, paste0(named_label, "_qq_plot.pdf"))
+      open_diag_pdf(output_path, length(new_res_list))
     }
 
     for (i in names(new_res_list)) {
-      qqnorm(new_res_list[[i]]$residuals,
+      qqnorm(
+        new_res_list[[i]]$residuals,
         pch = 19,
-        cex = 0.2,
-        col = "#0A2E4D",
+        cex = 0.3,
+        col = cols$deep_water,
         main = unique(new_res_list[[i]]$formula)
       )
 
-      qqline(new_res_list[[i]]$residuals, lwd = 2)
-
-      if (save_fig == TRUE) {
-        title <- paste0("Normal Q-Q Plot of Residuals: ", geog, sample_title)
-        mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-      }
+      qqline(new_res_list[[i]]$residuals, lwd = 2, col = cols$text)
     }
 
     if (save_fig == TRUE) {
-      dev.off()
+      close_diag_pdf(
+        title = paste0("Normal Q-Q plot of residuals, ", geog, sample_title),
+        subtitle = "Each panel shows one model specification.",
+        alt_text = paste(
+          "Alt text: Multi-panel Q-Q plot of residuals for", geog, sample_title, ".",
+          "Each panel compares residual quantiles to a normal reference line."
+        )
+      )
     }
-
-    # PACF plot
+    # 4. PACF Plot
     if (save_fig == TRUE) {
-      grid <- c(min(length(formula_list), 3),
-                ceiling(length(formula_list) / 3))
-      output_path <- file.path(output_folder_main,
-                               paste0(named_label, "_pacf.pdf"))
-      pdf(output_path, width = grid[1] * 5.5, height = grid[2] * 4.5)
-      pdf_dev_id <- grDevices::dev.cur()
-      on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                         list(ID = pdf_dev_id)), add = TRUE)
-
-      par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0))
+      output_path <- file.path(output_folder_main, paste0(named_label, "_pacf.pdf"))
+      open_diag_pdf(output_path, length(formula_list))
     }
 
     for (i in names(formula_list)) {
       residuals_clean <- stats::na.omit(formula_list[[i]]$residuals)
-      stats::pacf(residuals_clean,
-                  main = unique(formula_list[[i]]$formula),
-                  col = "#7A855C")
 
-      if (save_fig == TRUE) {
-        title <- paste0("Partial autocorrelation function: ", geog)
-        mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-      }
+      stats::pacf(
+        residuals_clean,
+        main = unique(formula_list[[i]]$formula),
+        col = cols$olive_green
+      )
     }
 
     if (save_fig == TRUE) {
-      dev.off()
+      close_diag_pdf(
+        title = paste0("Partial autocorrelation function of residuals, ", geog),
+        subtitle = "Each panel shows one model specification.",
+        alt_text = paste(
+          "Alt text: Multi-panel partial autocorrelation function plot of model residuals for", geog, ".",
+          "Each panel corresponds to one model specification and shows the autocorrelation structure across lags."
+        )
+      )
     }
   }
 
-  return(list(qaic_results, qaic_summary, vif_results, vif_summary,
-              adf_results))
+  return(list(
+    qaic_results,
+    qaic_summary,
+    vif_results,
+    vif_summary,
+    adf_results
+  ))
 }
-
 #' Define and run quasi-Poisson regression with DLNM
 #'
-#' @description Fits a quasi-Poisson case-crossover with a distributed lag
-#' non-linear model.
+#' @description Fits a quasi-Poisson time series regression with a
+#' distributed lag non-linear model.
 #'
 #' @param df_list A list of dataframes containing daily timeseries data for a
 #' health outcome and climate variables which may be disaggregated by a
@@ -643,6 +676,8 @@ hc_model_validation <- function(df_list,
 #' @param cb_list List of cross-basis matrices from hc_create_crossbasis
 #' function.
 #' @param dfseas Integer. Degrees of freedom for seasonality. Defaults to 8.
+#' @param df_control Integer. Degrees of freedom for natural splines applied to
+#' control variables. Defaults to 3.
 #'
 #' @returns 'model_list'. List containing models by geography.
 #'
@@ -650,7 +685,8 @@ hc_model_validation <- function(df_list,
 hc_quasipoisson_dlnm <- function(df_list,
                                  control_cols = NULL,
                                  cb_list,
-                                 dfseas = 8) {
+                                 dfseas = 8,
+                                 df_control = 3) {
   model_list <- list()
 
   # build the formula with base formula and control variables
@@ -674,42 +710,50 @@ hc_quasipoisson_dlnm <- function(df_list,
   } else {
     control_cols <- c()
   }
-
-  # define the base independent cols
-  base_independent_cols <- c(
+  # define the base columns
+  base_cols <- c(
     "cb",
     "dow",
     paste0("splines::ns(date, df = ", dfseas, " * length(unique(year)))")
   )
 
-  # model formula
+  # base model formula
   base_formula <- paste(
     "deaths ~",
-    paste(base_independent_cols,
-      collapse = " + "
+    paste(base_cols,
+          collapse = " + "
     )
   )
 
-  if (is.null(control_cols)) {
-    formula <- as.formula(paste(base_formula))
+  # define the formula with spline-applied control variables, if specified
+  if (!is.null(control_cols) && length(control_cols) > 0) {
+    control_ns <- paste0(control_cols, "_ns")
+    formula <- as.formula(
+      paste(base_formula, "+", paste(control_ns, collapse = " + "))
+    )
   } else {
-    formula <- as.formula(paste(
-      base_formula,
-      paste("+", paste(control_cols,
-        collapse = " + "
-      ))
-    ))
+    formula <- as.formula(base_formula)
   }
 
-  # Run model
+
+  # run models per geography
   for (geog in names(df_list)) {
+
     geog_data <- df_list[[geog]]
     cb <- cb_list[[geog]]
 
+    # create spline matrices for control variables
+    if (!is.null(control_cols) && length(control_cols) > 0) {
+      for (v in control_cols) {
+        ns_matrix <- splines::ns(geog_data[[v]], df = df_control)
+        assign(paste0(v, "_ns"), ns_matrix)
+      }
+    }
+
     model <- glm(formula,
-      geog_data,
-      family = quasipoisson,
-      na.action = "na.exclude"
+                 geog_data,
+                 family = quasipoisson,
+                 na.action = "na.exclude"
     )
 
     model_list[[geog]] <- model
@@ -973,23 +1017,45 @@ hc_plot_power <- function(power_list_high,
                           save_fig = FALSE,
                           output_folder_path = NULL,
                           country = "National") {
-  # High temperature
-  if (save_fig == TRUE) {
-    grid <- c(min(length(power_list_high), 3),
-              ceiling(length(power_list_high) / 3))
-    output_path <- file.path(output_folder_path,
-                             "model_validation",
-                             "power_vs_high_temperature.pdf")
-    pdf(output_path, width = max(10, grid[1] * 5.5),
-        height = max(7, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-    par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0), mar = c(8, 4, 5, 4))
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
   }
+
+  cols <- get_accessible_palette()
+
+  # High temperature power plots
+  if (save_fig == TRUE) {
+    open_accessible_pdf(
+      file = file.path(output_folder_path,
+                       "model_validation",
+                       "power_vs_high_temperature.pdf"),
+      n_plots = length(power_list_high),
+      max_cols = 2,
+      panel_width = 6.8,
+      panel_height = 6.2,
+      mar = c(6.8, 5, 3.2, 4.2),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+
+  high_title <- paste0("Power vs. high temperatures by geography, ", country)
+  high_subtitle <- paste(
+    "Each panel shows the power statistic across high temperature values.",
+    "The dashed horizontal line marks the 80% power reference threshold."
+  )
+
+  high_alt_text <- paste(
+    "Alt text: Multi-panel line chart showing statistical power against high temperature by geography.",
+    "Each panel contains a rose-coloured line for power percentage across temperatures.",
+    "A dashed horizontal line marks the 80 percent reference threshold."
+  )
+
   for (geog in names(power_list_high)) {
     df <- power_list_high[[geog]]
     df <- df[order(df$temperature), ]
+
+    par(mar = c(6.8, 5, 3.2, 4.2))
 
     plot(
       x = df$temperature,
@@ -998,6 +1064,7 @@ hc_plot_power <- function(power_list_high,
       xlab = "Temperature",
       ylab = "Power (%)",
       main = geog,
+      cex.main = 1.2,
       col = "#C75E70",
       ylim = c(0, 100),
       lwd = 2
@@ -1005,35 +1072,74 @@ hc_plot_power <- function(power_list_high,
 
     abline(
       h = 80,
-      col = "black",
-      lty = 2
+      col = cols$text,
+      lty = 2,
+      lwd = 1.5
     )
   }
 
   if (save_fig == TRUE) {
-    title <- paste0("Power vs. high temperatures by geography, ", country)
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
+    run_accessible_pdf_plot(
+      title = high_title,
+      subtitle = high_subtitle,
+      line_title = 4.9,
+      line_subtitle = 3.2
+    )
+
+    add_figure_legend(
+      legend = c("Power curve", "80% reference threshold"),
+      col = c("#C75E70", "#4D4D4D"),
+      lty = c(1, 2),
+      lwd = c(2, 1.5),
+      pch = c(NA, NA),
+      pt.cex = c(1.2, 1.2),
+      cex = 1.05,
+      seg.len = 2,
+      inset = 0.03,
+      text.col = cols$text,
+      vpad = 0.024,
+      bty = "o"
+    )
+
+    add_accessible_alt_text(
+      alt_text = high_alt_text
+    )
+
     dev.off()
   }
 
-  # Low temperature
+  # Low temperature power plots
   if (save_fig == TRUE) {
-    grid <- c(min(length(power_list_low), 3),
-              ceiling(length(power_list_low) / 3))
-    output_path <- file.path(output_folder_path,
-                             "model_validation",
-                             "power_vs_low_temperature.pdf")
-    pdf(output_path, width = max(10, grid[1] * 5.5),
-        height = max(7, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-    par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0), mar = c(8, 4, 5, 4))
+    open_accessible_pdf(
+      file = file.path(output_folder_path,
+                       "model_validation",
+                       "power_vs_low_temperature.pdf"),
+      n_plots = length(power_list_low),
+      max_cols = 2,
+      panel_width = 6.8,
+      panel_height = 6.2,
+      mar = c(6.8, 5, 3.2, 4.2),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
   }
+
+  low_title <- paste0("Power vs. low temperatures by geography, ", country)
+  low_subtitle <- paste(
+    "Each panel shows the power statistic across low temperature values.",
+    "The dashed horizontal line marks the 80% power reference threshold."
+  )
+
+  low_alt_text <- paste(
+    "Alt text: Multi-panel line chart showing statistical power against low temperature by geography.",
+    "Each panel contains a blue line for power percentage across temperatures.",
+    "A dashed horizontal line marks the 80 percent reference threshold."
+  )
 
   for (geog in names(power_list_low)) {
     df <- power_list_low[[geog]]
     df <- df[order(df$temperature), ]
+
+    par(mar = c(6.8, 5, 3.2, 4.2))
 
     plot(
       x = df$temperature,
@@ -1042,6 +1148,7 @@ hc_plot_power <- function(power_list_high,
       xlab = "Temperature",
       ylab = "Power (%)",
       main = geog,
+      cex.main = 1.2,
       col = "#296991",
       ylim = c(0, 100),
       lwd = 2
@@ -1049,14 +1156,39 @@ hc_plot_power <- function(power_list_high,
 
     abline(
       h = 80,
-      col = "black",
-      lty = 2
+      col = cols$text,
+      lty = 2,
+      lwd = 1.5
     )
   }
 
   if (save_fig == TRUE) {
-    title <- paste0("Power vs. low temperatures by geography, ", country)
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
+    run_accessible_pdf_plot(
+      title = low_title,
+      subtitle = low_subtitle,
+      line_title = 4.9,
+      line_subtitle = 3.2
+    )
+
+    add_figure_legend(
+      legend = c("Power curve", "80% reference threshold"),
+      col = c("#296991", "#4D4D4D"),
+      lty = c(1, 2),
+      lwd = c(2, 1.5),
+      pch = c(NA, NA),
+      pt.cex = c(1.2, 1.2),
+      cex = 1.05,
+      seg.len = 2,
+      inset = 0.03,
+      text.col = cols$text,
+      vpad = 0.024,
+      bty = "o"
+    )
+
+    add_accessible_alt_text(
+      alt_text = low_alt_text
+    )
+
     dev.off()
   }
 }
@@ -1161,6 +1293,7 @@ hc_plot_rr <- function(df_list,
     old_par <- graphics::par(no.readonly = TRUE)
     on.exit(graphics::par(old_par), add = TRUE)
   }
+  cols = get_accessible_palette()
 
   xlim <- c(
     min(sapply(pred_list, function(x) min(x$predvar, na.rm = TRUE))),
@@ -1181,22 +1314,15 @@ hc_plot_rr <- function(df_list,
   })), na.rm = TRUE)
 
   if (save_fig == TRUE) {
-    grid <- c(min(length(pred_list), 3), ceiling(length(pred_list) / 3))
-
-    output_path <- file.path(output_folder_path, "temp_mortality_rr_plot.pdf")
-    pdf(output_path,
-        width = max(10, grid[1] * 5.5), height = max(7, grid[2] * 4))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    layout_ids <- seq_len(grid[1] * grid[2])
-    layout_matrix <- matrix(layout_ids,
-                            nrow = grid[2], ncol = grid[1], byrow = TRUE)
-
-    layout(layout_matrix, heights = rep(1, grid[2]), widths = rep(1, grid[1]))
-
-    par(oma = c(0, 1, 4, 1))
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "temp_mortality_rr_plot.pdf"),
+      n_plots = length(pred_list),
+      max_cols = 2,
+      panel_width = 7.8,
+      panel_height = 5.4,
+      mar = c(5.4, 5.4, 3.8, 4.4),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
   }
 
   for (geog in names(pred_list)) {
@@ -1208,38 +1334,39 @@ hc_plot_rr <- function(df_list,
     plot(geog_pred,
       "overall",
       xlab = expression(paste("Temperature (", degree, "C)")),
-      ylab = "RR",
+      ylab = "Relative risk",
       ylim = ylim,
       xlim = xlim,
       main = geog,
-      col = "#296991"
+      cex.main = 1.2,
+      col = cols$deep_water
     )
 
     # high temperature threshold line
     vline_pos_high_x <- quantile(geog_temp, attr_thr_high / 100, na.rm = TRUE)
     vline_pos_high_y <- max(geog_pred$allRRfit, na.rm = TRUE) + 0.3
     vline_lab_high <- paste0("High temp. threshold\n",
-                             round(vline_pos_high_x, 2), intToUtf8(176),
-                             "C (p", attr_thr_high, ")")
+                             round(vline_pos_high_x, 0), intToUtf8(176),
+                             "C")
 
     # add dashed line  and label to plot
-    abline(v = vline_pos_high_x, col = "#0A2E4D", lty = 2)
+    abline(v = vline_pos_high_x, col = cols$prussian_blue , lty = 5)
     text(x = vline_pos_high_x,
          y = vline_pos_high_y,
-         labels = vline_lab_high, pos = 4, col = "black", cex = 0.8)
+         labels = vline_lab_high, pos = 4, col = cols$text, cex = 0.95, font = 2)
 
     # low temperature threshold line
     vline_pos_low_x <- quantile(geog_temp, attr_thr_low / 100, na.rm = TRUE)
     vline_pos_low_y <- max(geog_pred$allRRfit, na.rm = TRUE) + 0.3
     vline_lab_low <- paste0("Low temp. threshold\n",
-                            round(vline_pos_low_x, 2),
-                            intToUtf8(176), "C (p", attr_thr_low, ")")
+                            round(vline_pos_low_x, 0),
+                            intToUtf8(176), "C")
 
     # add dashed line to plot
-    abline(v = vline_pos_low_x, col = "#0A2E4D", lty = 2)
+    abline(v = vline_pos_low_x, col = cols$prussian_blue, lty = 4)
     text(x = vline_pos_low_x,
          y = vline_pos_low_y,
-         labels = vline_lab_low, pos = 4, col = "black", cex = 0.8)
+         labels = vline_lab_low, pos = 4, col = cols$text, cex = 0.95, font = 2)
 
     # MMT (min RR) line
     vline_pos_min_x <- quantile(geog_temp,
@@ -1253,14 +1380,13 @@ hc_plot_rr <- function(df_list,
     }
 
     vline_lab_min <- paste0("MMT\n",
-                            round(vline_pos_min_x, 2),
-                            intToUtf8(176), "C (p",
-                            round(minpercgeog_[geog], 2), ")")
+                            round(vline_pos_min_x, 0),
+                            intToUtf8(176), "C")
 
-    abline(v = vline_pos_min_x, col = "#C75E70", lty = 5)
+    abline(v = vline_pos_min_x, col = cols$dusky_rose, lty = 5)
     text(x = vline_pos_min_x,
          y = vline_pos_min_y,
-         labels = vline_lab_min, pos = 2, col = "black", cex = 0.8)
+         labels = vline_lab_min, pos = 2, col = cols$text, cex = 0.95, font = 2)
 
     # create histogram on RR plot
     geog_temp_range <- range(geog_temp, na.rm = TRUE)
@@ -1271,7 +1397,7 @@ hc_plot_rr <- function(df_list,
       plot = FALSE
     )
 
-    hist_scale <- (0.3) / hist_max
+    hist_scale <- (0.5) / hist_max
     scaled_counts <- hist_data$counts * hist_scale
 
     for (i in seq_along(hist_data$counts)) {
@@ -1295,7 +1421,7 @@ hc_plot_rr <- function(df_list,
     adj_val <- (hist_midpoint - ylim[1]) / (ylim[2] - ylim[1])
 
     # Add axis title with dynamic vertical alignment
-    mtext("Frequency (days)", side = 4, line = 3, adj = adj_val, cex = 0.7)
+    mtext("Number of days", side = 4, line = 3, adj = adj_val, cex = 0.7)
   }
 
   if (save_fig == TRUE) {
@@ -1308,12 +1434,48 @@ hc_plot_rr <- function(df_list,
                  function(x) max(lubridate::year(x$date), na.rm = TRUE))),
       ")"
     )
+    main_title <- paste0(
+      "Relative risk of mortality by mean temperature and region, ",
+      country, " ", year_range
+    )
 
-    title <- paste0("Relative risk of mortality by mean temperature and
-                    geography, ", country, " ", year_range)
+    sub_title <- paste(
+      "Panels show high and low temperature thresholds, minimum mortality temperature (MMT),",
+      "uncertanity, and the frequency distribution of observed temperature."
 
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
+    )
 
+    alt_text <- paste("Alt text:",
+                      "Multi-panel figure showing relative risk of mortality across temperatures",
+                      "for each region. Each panel contains a blue relative risk curve with",
+                      "a shaded 95% confidence interval, vertical lines marking the high and low",
+                      "temperature thresholds and the lowest-risk temperature, and a histogram",
+                      "showing the frequency distribution of observed temperatures. The right-hand",
+                      "axis indicates the number of days in the temperature time series."
+    )
+
+    run_accessible_pdf_plot(
+    title = main_title,
+    subtitle = sub_title,
+    line_title = 4.9,
+    line_subtitle = 3.2
+    )
+
+    add_figure_legend(legend = c("Relative risk curve","Histogram (temperature frequency)          ",
+                                 "Uncertainty (95% CI)"),
+                      col = c(cols$deep_water,cols$olive_green,cols$smoke_grey),
+                      lty = c(1,NA,NA),
+                      lwd = c(3,NA,NA),
+                      pch = c(NA, 15,15),
+                      pt.cex = c(1.5,1.8,1.8),
+                      cex = 1.11,
+                      seg.len = 2,
+                      inset = 0.01,
+                      text.col = cols$text,
+                      vpad = 0.026,
+                      bty = "o")
+
+    add_accessible_alt_text(alt_text)
     dev.off()
   }
 }
@@ -1334,6 +1496,8 @@ hc_plot_rr <- function(df_list,
 #' temperature threshold for calculating attributable risk. Defaults to 97.5.
 #' @param attr_thr_low Integer. Percentile at which to define the lower
 #' temperature threshold for calculating attributable risk. Defaults to 2.5.
+#' @param seed Optional integer random seed used when sampling residuals for
+#' model validation plots. Defaults to NULL.
 #'
 #' @returns 'attr_list'. A list containing attributable numbers per geography.
 #'
@@ -1343,8 +1507,13 @@ hc_attr <- function(df_list,
                     pred_list,
                     minpercgeog_,
                     attr_thr_high = 97.5,
-                    attr_thr_low = 2.5) {
+                    attr_thr_low = 2.5,
+                    seed = NULL) {
   attr_list <- list()
+
+  if(!is.null(seed)) {
+    set.seed(seed)
+  }
 
   for (geog in names(df_list)) {
     geog_data <- df_list[[geog]]
@@ -1556,32 +1725,28 @@ hc_plot_attr_heat_totals <- function(df_list,
                                      save_fig = FALSE,
                                      output_folder_path = NULL,
                                      country = "National") {
+  cols = get_accessible_palette()
   if (save_fig == TRUE) {
     num_geogs <- nrow(res_attr_tot)
 
-    # Dynamically adjust height based on number of geographies
-    chart_height <- 6
-    chart_width <- 0.3 * num_geogs # adjust as needed
-    total_width <- max(8, chart_width)
-
-    output_path <- file.path(output_folder_path,
-                             "mortality_total_heat_attr_plot.pdf")
-    pdf(output_path, width = total_width, height = chart_height * 2)
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    # Set up layout: 1 row for barplot and 1 row for table
-    layout(matrix(c(1, 2), nrow = 2), heights = c(chart_height, chart_height))
-
-    # Set up plotting area for the bar chart
-    par(mar = c(10, 5, 4, 2), oma = c(1, 0, 0, 0))
+    open_accessible_pdf(
+      file = file.path(
+        output_folder_path,
+        "mortality_total_heat_attr_plot.pdf"
+      ),
+      n_plots = 2,
+      max_cols = 1,
+      panel_width = 13,
+      panel_height = max(7.5, 0.45 * num_geogs),
+      mar = c(7.5, 12, 2.5, 2),
+      oma = c(7.5, 1, 4.8, 1)
+    )
   }
 
   # Shorten the labels to a fixed length
   short_labels <- sapply(as.character(res_attr_tot$region), function(x) {
-    if (nchar(x) - 3 > 10) {
-      paste0(substr(x, 1, 10), "...")
+    if (nchar(x) - 3 > 17) {
+      paste0(substr(x, 1, 17), "...")
     } else {
       x
     }
@@ -1610,11 +1775,27 @@ hc_plot_attr_heat_totals <- function(df_list,
                         af_heat_ci_range[1], af_heat_ci_range[2])
   ar_warning <- sprintf("Warning: AR CI's range from %.2f to %.2f per 100,000",
                         ar_heat_ci_range[1], ar_heat_ci_range[2])
-  ovr_warning <- "(Please refer to the associated data table for more
-                  information on the uncertainty around each estimate)"
+  ovr_warning <- "(Please refer to the associated data table for more information on the uncertainty around each estimate)"
+  main_title <- paste0(
+    "Total heat-related mortality burden by region, ",
+    country, " ", year_range
+  )
+
+  sub_title <- paste(
+    "Top panel shows attributable fraction and bottom panel shows attributable rate.",
+    "The highlighted bar represents", country, "."
+  )
+
+  alt_text <- paste(
+    "Alt text: Two-panel horizontal bar chart of heat-related mortality burden by region.",
+    "The first panel shows attributable fraction in percent and the second panel shows attributable rate per 100,000 population.",
+    "Regions are shown on the y-axis.",
+    "The", country, "bar is highlighted in green.",
+    "Warning text below each panel summarises the overall confidence interval range."
+  )
 
   # Sort by AF descending
-  sorted_indices <- order(res_attr_tot$af_heat, decreasing = TRUE)
+  sorted_indices <- order(res_attr_tot$af_heat, decreasing = FALSE)
   res_af_heat_tot <- res_attr_tot[sorted_indices, ]
   short_labs_af_heat <- short_labels[sorted_indices]
 
@@ -1628,23 +1809,34 @@ hc_plot_attr_heat_totals <- function(df_list,
   barplot(
     names.arg = short_labs_af_heat,
     height = res_af_heat_tot$af_heat,
-    ylab = "High temperature AF (%)",
-    main = paste0("Attributable fraction of high temperature mortality by
-                  geography, ", country, " ", year_range),
+    xlab = "High temperature AF (%)",
+    main = paste0("Attributable fraction of high temperature mortality by region, ",
+                  country, " ", year_range),
     col = bar_col_af_heat,
-    las = 2,
-    horiz = FALSE
+    las = 1,
+    xlim = c(0, max(res_af_heat_tot$af_heat, na.rm = TRUE) * 1.15),
+    horiz = TRUE,
+    cex.main = 1.3
   )
 
-  mtext(af_warning, side = 1, line = 7, cex = 0.8, col = "red", font = 3)
-  mtext(ovr_warning, side = 1, line = 8, cex = 0.8, col = "red", font = 3)
+  if (save_fig == TRUE) {
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 2.2,
+      line_subtitle = 1.15
+    )
+  }
+
+  mtext(af_warning, side = 1, line = 4.2, cex = 1, col = "red", font = 3)
+  mtext(ovr_warning, side = 1, line = 5.35, cex = 1, col = "red", font = 3)
 
   if (save_fig == TRUE) {
-    par(mar = c(10, 5, 4, 2))
+    par(mar = c(7.5, 12, 2.5, 2))
   }
 
   # Sort by AF descending
-  sorted_indices <- order(res_attr_tot$ar_heat, decreasing = TRUE)
+  sorted_indices <- order(res_attr_tot$ar_heat, decreasing = FALSE)
   res_ar_heat_tot <- res_attr_tot[sorted_indices, ]
   short_labs_ar_heat <- short_labels[sorted_indices]
 
@@ -1658,16 +1850,22 @@ hc_plot_attr_heat_totals <- function(df_list,
   barplot(
     names.arg = short_labs_ar_heat,
     height = res_ar_heat_tot$ar_heat,
-    ylab = "High temperature AR (per 100,000 population)",
-    main = paste0("Attributable rate of high temperature mortality by
-                  geography, ", country, " ", year_range),
+    xlab = "High temperature AR (per 100,000 population)",
+    main = paste0("Attributable rate of high temperature mortality by region, ",
+                  country, " ", year_range),
     col = bar_col_ar_heat,
-    las = 2,
-    horiz = FALSE
+    las = 1,
+    horiz = TRUE,
+    xlim = c(0, max(res_ar_heat_tot$ar_heat, na.rm = TRUE) * 1.15),
+    cex.main = 1.3
   )
 
-  mtext(ar_warning, side = 1, line = 7, cex = 0.8, col = "red", font = 3)
-  mtext(ovr_warning, side = 1, line = 8, cex = 0.8, col = "red", font = 3)
+  mtext(ar_warning, side = 1, line = 4.2, cex = 1, col = "red", font = 3)
+  mtext(ovr_warning, side = 1, line = 5.35, cex = 1, col = "red", font = 3)
+
+  if (save_fig == TRUE) {
+    add_accessible_alt_text(alt_text = alt_text, width = 170)
+  }
 
   if (save_fig == TRUE) {
     dev.off()
@@ -1702,29 +1900,24 @@ hc_plot_attr_cold_totals <- function(df_list,
   if (save_fig == TRUE) {
     num_geogs <- nrow(res_attr_tot)
 
-    # Dynamically adjust height based on number of geographies
-    chart_height <- 6
-    chart_width <- 0.3 * num_geogs # adjust as needed
-    total_width <- max(8, chart_width)
-
-    output_path <- file.path(output_folder_path,
-                             "mortality_total_cold_attr_plot.pdf")
-    pdf(output_path, width = total_width, height = chart_height * 2)
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    # Set up layout: 1 row for barplot and 1 row for table
-    layout(matrix(c(1, 2), nrow = 2), heights = c(chart_height, chart_height))
-
-    # Set up plotting area for the bar chart
-    par(mar = c(10, 5, 4, 2), oma = c(1, 0, 0, 0))
+    open_accessible_pdf(
+      file = file.path(
+        output_folder_path,
+        "mortality_total_cold_attr_plot.pdf"
+      ),
+      n_plots = 2,
+      max_cols = 1,
+      panel_width = 13,
+      panel_height = max(7.5, 0.45 * num_geogs),
+      mar = c(7.5, 12, 2.5, 2),
+      oma = c(7.5, 1, 4.8, 1)
+    )
   }
 
   # Shorten the labels to a fixed length
   short_labels <- sapply(as.character(res_attr_tot$region), function(x) {
-    if (nchar(x) - 3 > 10) {
-      paste0(substr(x, 1, 10), "...")
+    if (nchar(x) - 3 > 25) {
+      paste0(substr(x, 1, 25), "...")
     } else {
       x
     }
@@ -1753,11 +1946,28 @@ hc_plot_attr_cold_totals <- function(df_list,
                         af_cold_ci_range[1], af_cold_ci_range[2])
   ar_warning <- sprintf("Warning: AR CI's range from %.2f to %.2f per 100,000",
                         ar_cold_ci_range[1], ar_cold_ci_range[2])
-  ovr_warning <- "(Please refer to the associated data table for more
-                  information on the uncertainty around each estimate)"
+  ovr_warning <- "(Please refer to the associated data table for more information on the uncertainty around each estimate)"
 
-  # Sort by AF descending
-  sorted_indices <- order(res_attr_tot$af_cold, decreasing = TRUE)
+  main_title <- paste0(
+    "Total cold-related mortality burden by region, ",
+    country, " ", year_range
+  )
+
+  sub_title <- paste(
+    "Top panel shows attributable fraction and bottom panel shows attributable rate.",
+    "The highlighted bar represents", country, "."
+  )
+
+  alt_text <- paste(
+    "Alt text: Two-panel horizontal bar chart of cold-related mortality burden by region.",
+    "The first panel shows attributable fraction in percent and the second panel shows attributable rate per 100,000 population.",
+    "Regions are shown on the y-axis.",
+    "The", country, "bar is highlighted in green.",
+    "Warning text below each panel summarises the overall confidence interval range."
+  )
+
+  # Sort by AF ascending
+  sorted_indices <- order(res_attr_tot$af_cold, decreasing = FALSE)
   res_af_cold_tot <- res_attr_tot[sorted_indices, ]
   short_labs_af_cold <- short_labels[sorted_indices]
 
@@ -1765,29 +1975,42 @@ hc_plot_attr_cold_totals <- function(df_list,
   bar_col_af_cold <- rep("#0A2E4D", length(short_labs_af_cold))
   nat_ind_af_cold <- which(res_af_cold_tot$region == country)
   if (length(nat_ind_af_cold) > 0) {
-    bar_col_af_cold[nat_ind_af_cold] <- "#7a855c" # Highlight colour
+    bar_col_af_cold[nat_ind_af_cold] <- "#7a855c"
   }
 
   barplot(
     names.arg = short_labs_af_cold,
     height = res_af_cold_tot$af_cold,
-    ylab = "Low temperature AF (%)",
-    main = paste0("Attributable fraction of low temperature mortality by
-                  geography, ", country, " ", year_range),
+    xlab = "Low temperature AF (%)",
+    main = paste0("Attributable fraction of low temperature mortality by region, ",
+                  country, " ", year_range),
     col = bar_col_af_cold,
-    las = 2,
-    horiz = FALSE
+    las = 1,
+    xlim = c(0, max(res_af_cold_tot$af_cold, na.rm = TRUE) * 1.15),
+    horiz = TRUE,
+    cex.main = 1.15
   )
 
-  mtext(af_warning, side = 1, line = 7, cex = 0.8, col = "red", font = 3)
-  mtext(ovr_warning, side = 1, line = 8, cex = 0.8, col = "red", font = 3)
 
   if (save_fig == TRUE) {
-    par(mar = c(10, 5, 4, 2))
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 2.2,
+      line_subtitle = 1.15
+    )
   }
 
-  # Sort by AF descending
-  sorted_indices <- order(res_attr_tot$ar_cold, decreasing = TRUE)
+
+  mtext(af_warning, side = 1, line = 4.2, cex = 1, col = "red", font = 3)
+  mtext(ovr_warning, side = 1, line = 5.35, cex = 1, col = "red", font = 3)
+
+  if (save_fig == TRUE) {
+    par(mar = c(7.5, 12, 2.5, 2))
+  }
+
+  # Sort by AR ascending
+  sorted_indices <- order(res_attr_tot$ar_cold, decreasing = FALSE)
   res_ar_cold_tot <- res_attr_tot[sorted_indices, ]
   short_labs_ar_cold <- short_labels[sorted_indices]
 
@@ -1795,22 +2018,30 @@ hc_plot_attr_cold_totals <- function(df_list,
   bar_col_ar_cold <- rep("#296991", length(short_labs_ar_cold))
   nat_ind_ar_cold <- which(res_ar_cold_tot$region == country)
   if (length(nat_ind_ar_cold) > 0) {
-    bar_col_ar_cold[nat_ind_ar_cold] <- "#7a855c" # Highlight colour
+    bar_col_ar_cold[nat_ind_ar_cold] <- "#7a855c"
   }
 
   barplot(
     names.arg = short_labs_ar_cold,
     height = res_ar_cold_tot$ar_cold,
-    ylab = "Low temperature AR (per 100,000 population)",
-    main = paste0("Attributable rate of low temperature mortality by
-                  geography, ", country, " ", year_range),
+    xlab = "Low temperature AR (per 100,000 population)",
+    main = paste0("Attributable rate of low temperature mortality by region, ",
+                  country, " ", year_range),
     col = bar_col_ar_cold,
-    las = 2,
-    horiz = FALSE
+    las = 1,
+    horiz = TRUE,
+    xlim = c(0, max(res_ar_cold_tot$ar_cold, na.rm = TRUE) * 1.15),
+    cex.main = 1.15
   )
 
-  mtext(ar_warning, side = 1, line = 7, cex = 0.8, col = "red", font = 3)
-  mtext(ovr_warning, side = 1, line = 8, cex = 0.8, col = "red", font = 3)
+  mtext(ar_warning, side = 1, line = 4.2, cex = 1, col = "red", font = 3)
+  mtext(ovr_warning, side = 1, line = 5.35, cex = 1, col = "red", font = 3)
+
+  if (save_fig == TRUE) {
+    add_accessible_alt_text(
+      alt_text = alt_text
+    )
+  }
 
   if (save_fig == TRUE) {
     dev.off()
@@ -1838,18 +2069,26 @@ hc_plot_af_heat_yearly <- function(attr_yr_list,
                                    save_fig = FALSE,
                                    output_folder_path = NULL,
                                    country = "National") {
-  if (save_fig == TRUE) {
-    grid <- c(min(length(attr_yr_list), 3), ceiling(length(attr_yr_list) / 3))
-    output_path <- file.path(output_folder_path,
-                             "mortality_af_heat_timeseries.pdf")
-    pdf(output_path, width = max(10, grid[1] * 5.5),
-                    height = max(7, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
 
-    par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0), mar = c(8, 4, 5, 4))
+
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
   }
+
+  if (save_fig == TRUE) {
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "mortality_af_heat_timeseries.pdf"),
+      n_plots = length(attr_yr_list),
+      max_cols = 2,
+      panel_width = 6.8,
+      panel_height = 6.6,
+      mar = c(7.2, 5, 3.2, 4.2),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+
+  cols = get_accessible_palette()
 
   year_min <- min(sapply(attr_yr_list, function(x) min(x$year, na.rm = TRUE)))
   year_max <- max(sapply(attr_yr_list, function(x) max(x$year, na.rm = TRUE)))
@@ -1859,8 +2098,26 @@ hc_plot_af_heat_yearly <- function(attr_yr_list,
 
   ylim <- c(min(c(0, y_min)), y_max) * 1.5
 
+  year_range <- paste0("(", year_min, "-", year_max, ")")
+  main_title <- paste0(
+    "Yearly attributable fraction of high temperature mortality by region, ",
+    country, " ", year_range
+  )
+
+  sub_title <- paste(
+    "Each panel shows yearly attributable fraction with a shaded 95% confidence interval."
+  )
+
+  alt_text <- paste(
+    "Alt text: Multi-panel line chart showing yearly attributable fraction of high temperature mortality by region.",
+    "Each panel contains a rose-coloured line for yearly attributable fraction and a shaded band for the 95% confidence interval.",
+    "A horizontal dashed line marks zero attributable fraction."
+  )
+
   for (geog in names(attr_yr_list)) {
     geog_af <- as.data.frame(attr_yr_list[[geog]])
+
+    par(mar = c(7.2, 5, 3.2, 4.2))
 
     plot(
       x = geog_af$year,
@@ -1871,40 +2128,25 @@ hc_plot_af_heat_yearly <- function(attr_yr_list,
       xlab = "Year",
       ylab = "High temperature AF (%)",
       main = geog,
+      cex.main = 1.2,
       col = "#c75e70"
     )
 
     # Ensure data is sorted by Year
     geog_af <- geog_af[order(geog_af$year), ]
 
-    # Create x and y coordinates for the polygon
-    x_poly <- c(geog_af$year, rev(geog_af$year))
-    y_poly <- c(geog_af$af_heat_upper_ci, rev(geog_af$af_heat_lower_ci))
-
     # Draw shaded confidence interval
     polygon(
-      x = x_poly,
-      y = y_poly,
+      x = c(geog_af$year, rev(geog_af$year)),
+      y = c(geog_af$af_heat_upper_ci, rev(geog_af$af_heat_lower_ci)),
       col = adjustcolor("#c75e70", alpha.f = 0.2),
       border = NA
     )
 
     abline(
       h = 0,
-      col = "black",
+      col = cols$text,
       lty = 2
-    )
-
-    legend("topright",
-      inset = c(0, -0.1),
-      legend = "95% CI",
-      col = adjustcolor("#c75e70", alpha.f = 0.2),
-      pch = 15,
-      pt.cex = 2,
-      bty = "n",
-      xpd = TRUE,
-      horiz = TRUE,
-      cex = 0.9
     )
 
     if (save_fig == TRUE) {
@@ -1912,27 +2154,46 @@ hc_plot_af_heat_yearly <- function(attr_yr_list,
                             max(geog_af$af_heat_upper_ci))
 
       if (af_heat_ci_range[1] < ylim[1] || af_heat_ci_range[2] > ylim[2]) {
-        ci_warning <- sprintf("Warning: CI's are outside the bounds of this
-                              chart. CI's range from %.2f%% to %.2f%%",
-                              af_heat_ci_range[1], af_heat_ci_range[2])
-        ovr_warning <- "(Please refer to the associated data table for more
-                        information on the uncertainty around each estimate)"
+        ci_warning <- sprintf(
+          paste(
+            "Warning: CI's are outside the bounds of this chart.",
+            "CI's range from %.2f%% to %.2f%%"
+          ),
+          af_heat_ci_range[1],
+          af_heat_ci_range[2]
+        )
+        ovr_warning <- "(Please refer to the associated data table for more information on the uncertainty around each estimate)"
 
-        mtext(ci_warning, side = 1, line = 5, cex = 0.6, col = "red",
-              font = 3)
-        mtext(ovr_warning, side = 1, line = 6, cex = 0.6, col = "red",
-              font = 3)
+        mtext(ci_warning, side = 1, line = 4.6, cex = 0.72, col = "red",
+              adj = 0, font = 3)
+        mtext(ovr_warning, side = 1, line = 5.9, cex = 0.72, col = "red",
+              adj = 0, font = 3)
       }
     }
   }
 
   if (save_fig == TRUE) {
-    year_range <- paste0("(", year_min, " - ", year_max, ")")
-    title <- paste0("Yearly attributable fraction of high temperature mortality
-                    by geography, ", country, " ", year_range)
-
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 4.9,
+      line_subtitle = 3.2
+    )
+    add_figure_legend(
+      legend = c("Attributable fraction      ", "95% CI", "Zero reference line"),
+      col = c("#c75e70", adjustcolor("#c75e70", alpha.f = 0.2), "#4D4D4D"),
+      lty = c(1, NA, 2),
+      lwd = c(2, NA, 1.5),
+      pch = c(NA, 15, NA),
+      pt.cex = c(1.2, 1.8, 1.2),
+      cex = 1.05,
+      seg.len = 2,
+      inset = 0.03,
+      text.col = cols$text,
+      vpad = 0.021,
+      bty = "o"
+    )
+    add_accessible_alt_text(alt_text = alt_text)
     dev.off()
   }
 }
@@ -1958,18 +2219,24 @@ hc_plot_af_cold_yearly <- function(attr_yr_list,
                                    save_fig = FALSE,
                                    output_folder_path = NULL,
                                    country = "National") {
-  if (save_fig == TRUE) {
-    grid <- c(min(length(attr_yr_list), 3), ceiling(length(attr_yr_list) / 3))
-    output_path <- file.path(output_folder_path,
-                             "mortality_af_cold_timeseries.pdf")
-    pdf(output_path, width = max(10, grid[1] * 5.5),
-                    height = max(7, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0), mar = c(8, 4, 5, 4))
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
   }
+
+  if (save_fig == TRUE) {
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "mortality_af_cold_timeseries.pdf"),
+      n_plots = length(attr_yr_list),
+      max_cols = 2,
+      panel_width = 6.8,
+      panel_height = 6.6,
+      mar = c(7.2, 5, 3.2, 4.2),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+
+  cols = get_accessible_palette()
 
   year_min <- min(sapply(attr_yr_list, function(x) min(x$year, na.rm = TRUE)))
   year_max <- max(sapply(attr_yr_list, function(x) max(x$year, na.rm = TRUE)))
@@ -1977,9 +2244,27 @@ hc_plot_af_cold_yearly <- function(attr_yr_list,
   y_max <- max(sapply(attr_yr_list, function(x) max(x$af_cold, na.rm = TRUE)))
 
   ylim <- c(min(c(0, y_min)), y_max) * 1.5
+  year_range <- paste0("(", year_min, "-", year_max, ")")
+  main_title <- paste0(
+    "Yearly attributable fraction of low temperature mortality by region, ",
+    country, " ", year_range
+  )
+
+  sub_title <- paste(
+    "Each panel shows yearly attributable fraction with a shaded 95% confidence interval."
+  )
+
+  alt_text <- paste(
+    "Alt text: Multi-panel line chart showing yearly attributable fraction of low temperature mortality by region.",
+    "Each panel contains a rose-coloured line for yearly attributable fraction and a shaded band for the 95% confidence interval.",
+    "A horizontal dashed line marks zero attributable fraction."
+  )
+
 
   for (geog in names(attr_yr_list)) {
     geog_af <- as.data.frame(attr_yr_list[[geog]])
+
+     par(mar = c(7.2, 5, 3.2, 4.2))
 
     plot(
       x = geog_af$year,
@@ -1990,41 +2275,22 @@ hc_plot_af_cold_yearly <- function(attr_yr_list,
       xlab = "Year",
       ylab = "Low temperature AF (%)",
       main = geog,
-      col = "#296991"
+      cex.main = 1.2,
+      col = "#296991",
     )
 
     # Ensure data is sorted by Year
     geog_af <- geog_af[order(geog_af$year), ]
 
-    # Create x and y coordinates for the polygon
-    x_poly <- c(geog_af$year, rev(geog_af$year))
-    y_poly <- c(geog_af$af_cold_upper_ci, rev(geog_af$af_cold_lower_ci))
-
     # Draw shaded confidence interval
     polygon(
-      x = x_poly,
-      y = y_poly,
+      x = c(geog_af$year, rev(geog_af$year)),
+      y = c(geog_af$af_cold_upper_ci, rev(geog_af$af_cold_lower_ci)),
       col = adjustcolor("#296991", alpha.f = 0.2),
       border = NA
     )
 
-    abline(
-      h = 0,
-      col = "black",
-      lty = 2
-    )
-
-    legend("topright",
-      inset = c(0, -0.1),
-      legend = "95% CI",
-      col = adjustcolor("#296991", alpha.f = 0.2),
-      pch = 15,
-      pt.cex = 2,
-      bty = "n",
-      xpd = TRUE,
-      horiz = TRUE,
-      cex = 0.9
-    )
+    abline(h = 0, col = "black", lty = 2)
 
     if (save_fig == TRUE) {
       af_cold_ci_range <- c(min(geog_af$af_cold_lower_ci),
@@ -2037,24 +2303,40 @@ hc_plot_af_cold_yearly <- function(attr_yr_list,
         ovr_warning <- "(Please refer to the associated data table for more
                         information on the uncertainty around each estimate)"
 
-        mtext(ci_warning, side = 1, line = 5, cex = 0.6, col = "red",
-              font = 3)
-        mtext(ovr_warning, side = 1, line = 6, cex = 0.6, col = "red",
-              font = 3)
+        mtext(ci_warning, side = 1, line = 4.6, cex = 0.72, col = "red",
+              adj = 0, font = 3)
+        mtext(ovr_warning, side = 1, line = 5.9, cex = 0.72, col = "red",
+              adj = 0, font = 3)
       }
     }
   }
 
   if (save_fig == TRUE) {
-    year_range <- paste0("(", year_min, " - ", year_max, ")")
-    title <- paste0("Yearly attributable fraction of low temperature mortality
-                    by geography, ", country, " ", year_range)
-
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 4.9,
+      line_subtitle = 3.2
+    )
+    add_figure_legend(
+      legend = c("Attributable fraction      ", "95% CI", "Zero reference line"),
+      col = c("#296991", adjustcolor("#296991", alpha.f = 0.2), "#4D4D4D"),
+      lty = c(1, NA, 2),
+      lwd = c(2, NA, 1.5),
+      pch = c(NA, 15, NA),
+      pt.cex = c(1.2, 1.8, 1.2),
+      cex = 1.05,
+      seg.len = 2,
+      inset = 0.03,
+      text.col = cols$text,
+      vpad = 0.021,
+      bty = "o"
+    )
+    add_accessible_alt_text(alt_text = alt_text)
     dev.off()
   }
 }
+
 
 #' Plot attributable rates by year - high temperatures
 #'
@@ -2077,18 +2359,24 @@ hc_plot_ar_heat_yearly <- function(attr_yr_list,
                                    save_fig = FALSE,
                                    output_folder_path = NULL,
                                    country = "National") {
-  if (save_fig == TRUE) {
-    grid <- c(min(length(attr_yr_list), 3), ceiling(length(attr_yr_list) / 3))
-    output_path <- file.path(output_folder_path,
-                             "mortality_ar_heat_timeseries.pdf")
-    pdf(output_path, width = max(10, grid[1] * 5.5),
-                    height = max(7, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0), mar = c(8, 4, 5, 4))
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
   }
+
+  if (save_fig == TRUE) {
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "mortality_ar_heat_timeseries.pdf"),
+      n_plots = length(attr_yr_list),
+      max_cols = 2,
+      panel_width = 6.8,
+      panel_height = 6.6,
+      mar = c(7.2, 5, 3.2, 4.2),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+
+  cols = get_accessible_palette()
 
   year_min <- min(sapply(attr_yr_list, function(x) min(x$year, na.rm = TRUE)))
   year_max <- max(sapply(attr_yr_list, function(x) max(x$year, na.rm = TRUE)))
@@ -2097,9 +2385,24 @@ hc_plot_ar_heat_yearly <- function(attr_yr_list,
   y_max <- max(sapply(attr_yr_list, function(x) max(x$ar_heat, na.rm = TRUE)))
 
   ylim <- c(min(c(0, y_min)), y_max) * 1.5
+  year_range <- paste0("(", year_min, "-", year_max, ")")
+  main_title <- paste0(
+    "Yearly attributable rate of high temperature mortality by region, ",
+    country, " ", year_range
+  )
+
+  sub_title <- paste(
+    "Each panel shows yearly attributable rate with a shaded 95% confidence interval."
+  )
+
+  alt_text <- paste(
+    "Alt text: Multi-panel line chart showing yearly attributable rate of high temperature mortality by region.",
+    "Each panel contains a rose-coloured line for yearly attributable rate and a shaded band for the 95% confidence interval.",
+    "A horizontal dashed line marks zero attributable rate")
 
   for (geog in names(attr_yr_list)) {
     geog_ar <- as.data.frame(attr_yr_list[[geog]])
+    par(mar = c(7.2, 5, 3.2, 4.2))
 
     plot(
       x = geog_ar$year,
@@ -2110,69 +2413,69 @@ hc_plot_ar_heat_yearly <- function(attr_yr_list,
       xlab = "Year",
       ylab = "High temperature AR (per 100,000 population)",
       main = geog,
+      cex.main = 1.2,
       col = "#C75E70"
     )
 
     # Ensure data is sorted by Year
     geog_ar <- geog_ar[order(geog_ar$year), ]
 
-    # Create x and y coordinates for the polygon
-    x_poly <- c(geog_ar$year, rev(geog_ar$year))
-    y_poly <- c(geog_ar$ar_heat_upper_ci, rev(geog_ar$ar_heat_lower_ci))
-
     # Draw shaded confidence interval
     polygon(
-      x = x_poly,
-      y = y_poly,
+      x = c(geog_ar$year, rev(geog_ar$year)),
+      y = c(geog_ar$ar_heat_upper_ci, rev(geog_ar$ar_heat_lower_ci)),
       col = adjustcolor("#C75E70", alpha.f = 0.2),
       border = NA
     )
 
-    abline(
-      h = 0,
-      col = "black",
-      lty = 2
-    )
-
-    legend("topright",
-      inset = c(0, -0.1),
-      legend = "95% CI",
-      col = adjustcolor("#C75E70", alpha.f = 0.2),
-      pch = 15,
-      pt.cex = 2,
-      bty = "n",
-      xpd = TRUE,
-      horiz = TRUE,
-      cex = 0.9
-    )
+    abline(h = 0, col = "black", lty = 2)
 
     if (save_fig == TRUE) {
       ar_heat_ci_range <- c(min(geog_ar$ar_heat_lower_ci),
                             max(geog_ar$ar_heat_upper_ci))
 
       if (ar_heat_ci_range[1] < ylim[1] || ar_heat_ci_range[2] > ylim[2]) {
-        ci_warning <- sprintf("Warning: CI's are outside the bounds of this
-                              chart. CI's range from %.2f to %.2f per 100,000",
-                              ar_heat_ci_range[1], ar_heat_ci_range[2])
-        ovr_warning <- "(Please refer to the associated data table for more
-                        information on the uncertainty around each estimate)"
+        ci_warning <- sprintf(
+          paste(
+            "Warning: CI's are outside the bounds of this chart.",
+            "CI's range from %.2f%% to %.2f%%"
+          ),
+          ar_heat_ci_range[1], ar_heat_ci_range[2])
+        ovr_warning <- "(Please refer to the associated data table for more information on the uncertainty around each estimate)"
 
-        mtext(ci_warning, side = 1, line = 5, cex = 0.6, col = "red",
-              font = 3)
-        mtext(ovr_warning, side = 1, line = 6, cex = 0.6, col = "red",
-              font = 3)
+        mtext(ci_warning, side = 1, line = 4.6, cex = 0.72, col = "red",
+              adj = 0, font = 3)
+        mtext(ovr_warning, side = 1, line = 5.9, cex = 0.72, col = "red",
+              adj = 0, font = 3)
+
       }
     }
   }
 
   if (save_fig == TRUE) {
-    year_range <- paste0("(", year_min, " - ", year_max, ")")
-    title <- paste0("Yearly attributable rate of high temperature mortality by
-                    geography, ", country, " ", year_range)
-
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 4.9,
+      line_subtitle = 3.2
+    )
+    add_figure_legend(
+      legend = c("Attributable rate      ", "95% CI", "Zero reference line"),
+      col = c("#c75e70", adjustcolor("#c75e70", alpha.f = 0.2), "#4D4D4D"),
+      lty = c(1, NA, 2),
+      lwd = c(2, NA, 1.5),
+      pch = c(NA, 15, NA),
+      pt.cex = c(1.2, 1.8, 1.2),
+      cex = 1.05,
+      seg.len = 2,
+      inset = 0.03,
+      text.col = cols$text,
+      vpad = 0.021,
+      bty = "o"
+    )
+    add_accessible_alt_text(alt_text = alt_text)
     dev.off()
+
   }
 }
 
@@ -2197,18 +2500,24 @@ hc_plot_ar_cold_yearly <- function(attr_yr_list,
                                    save_fig = FALSE,
                                    output_folder_path = NULL,
                                    country = "National") {
-  if (save_fig == TRUE) {
-    grid <- c(min(length(attr_yr_list), 3), ceiling(length(attr_yr_list) / 3))
-    output_path <- file.path(output_folder_path,
-                             "mortality_ar_cold_timeseries.pdf")
-    pdf(output_path, width = max(10, grid[1] * 5.5),
-                    height = max(7, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    par(mfrow = c(grid[2], grid[1]), oma = c(0, 0, 4, 0), mar = c(8, 4, 5, 4))
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
   }
+
+  if (save_fig == TRUE) {
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "mortality_ar_cold_timeseries.pdf"),
+      n_plots = length(attr_yr_list),
+      max_cols = 2,
+      panel_width = 6.8,
+      panel_height = 6.6,
+      mar = c(7.2, 5, 3.2, 4.2),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+
+  cols = get_accessible_palette()
 
   year_min <- min(sapply(attr_yr_list, function(x) min(x$year, na.rm = TRUE)))
   year_max <- max(sapply(attr_yr_list, function(x) max(x$year, na.rm = TRUE)))
@@ -2218,8 +2527,25 @@ hc_plot_ar_cold_yearly <- function(attr_yr_list,
 
   ylim <- c(min(c(0, y_min)), y_max) * 1.5
 
+  year_range <- paste0("(", year_min, "-", year_max, ")")
+  main_title <- paste0(
+    "Yearly attributable rate of low temperature mortality by region, ",
+    country, " ", year_range
+  )
+
+  sub_title <- paste(
+    "Each panel shows yearly attributable rate with a shaded 95% confidence interval."
+  )
+
+  alt_text <- paste(
+    "Alt text: Multi-panel line chart showing yearly attributable rate of low temperature mortality by region.",
+    "Each panel contains a blue line for yearly attributable rate and a shaded band for the 95% confidence interval.",
+    "A horizontal dashed line marks zero attributable rate")
+
+
   for (geog in names(attr_yr_list)) {
     geog_ar <- as.data.frame(attr_yr_list[[geog]])
+    par(mar = c(7.2, 5, 3.2, 4.2))
 
     plot(
       x = geog_ar$year,
@@ -2230,41 +2556,22 @@ hc_plot_ar_cold_yearly <- function(attr_yr_list,
       xlab = "Year",
       ylab = "Low temperature AR (per 100,000 population)",
       main = geog,
+      cex.main = 1.2,
       col = "#296991"
     )
 
     # Ensure data is sorted by Year
     geog_ar <- geog_ar[order(geog_ar$year), ]
 
-    # Create x and y coordinates for the polygon
-    x_poly <- c(geog_ar$year, rev(geog_ar$year))
-    y_poly <- c(geog_ar$ar_cold_upper_ci, rev(geog_ar$ar_cold_lower_ci))
-
     # Draw shaded confidence interval
     polygon(
-      x = x_poly,
-      y = y_poly,
+      x = c(geog_ar$year, rev(geog_ar$year)),
+      y = c(geog_ar$ar_cold_upper_ci, rev(geog_ar$ar_cold_lower_ci)),
       col = adjustcolor("#296991", alpha.f = 0.2),
       border = NA
     )
 
-    abline(
-      h = 0,
-      col = "black",
-      lty = 2
-    )
-
-    legend("topright",
-      inset = c(0, -0.1),
-      legend = "95% CI",
-      col = adjustcolor("#296991", alpha.f = 0.2),
-      pch = 15,
-      pt.cex = 2,
-      bty = "n",
-      xpd = TRUE,
-      horiz = TRUE,
-      cex = 0.9
-    )
+    abline(h = 0, col = "black", lty = 2)
 
     if (save_fig == TRUE) {
       ar_cold_ci_range <- c(min(geog_ar$ar_cold_lower_ci),
@@ -2277,21 +2584,36 @@ hc_plot_ar_cold_yearly <- function(attr_yr_list,
         ovr_warning <- "(Please refer to the associated data table for more
                         information on the uncertainty around each estimate)"
 
-        mtext(ci_warning, side = 1, line = 5, cex = 0.6, col = "red",
-              font = 3)
-        mtext(ovr_warning, side = 1, line = 6, cex = 0.6, col = "red",
-              font = 3)
+        mtext(ci_warning, side = 1, line = 4.6, cex = 0.72, col = "red",
+              adj = 0, font = 3)
+        mtext(ovr_warning, side = 1, line = 5.9, cex = 0.72, col = "red",
+              adj = 0, font = 3)
       }
     }
   }
 
   if (save_fig == TRUE) {
-    year_range <- paste0("(", year_min, " - ", year_max, ")")
-    title <- paste0("Yearly attributable rate of low temperature mortality by
-                    geography, ", country, " ", year_range)
-
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 4.9,
+      line_subtitle = 3.2
+    )
+    add_figure_legend(
+      legend = c("Attributable rate      ", "95% CI", "Zero reference line"),
+      col = c("#296991", adjustcolor("#296991", alpha.f = 0.2), "#4D4D4D"),
+      lty = c(1, NA, 2),
+      lwd = c(2, NA, 1.5),
+      pch = c(NA, 15, NA),
+      pt.cex = c(1.2, 1.8, 1.2),
+      cex = 1.05,
+      seg.len = 2,
+      inset = 0.03,
+      text.col = cols$text,
+      vpad = 0.021,
+      bty = "o"
+    )
+    add_accessible_alt_text(alt_text = alt_text)
     dev.off()
   }
 }
@@ -2324,19 +2646,23 @@ hc_plot_af_heat_monthly <- function(attr_mth_list,
                                     attr_thr_high = 97.5,
                                     save_fig = FALSE,
                                     output_folder_path = NULL) {
-  if (save_fig == TRUE) {
-    grid <- c(min(length(attr_mth_list), 3),
-              ceiling(length(attr_mth_list) / 3))
-    output_path <- file.path(output_folder_path,
-                             "mortality_af_heat_month_plot.pdf")
-    pdf(output_path, width = max(10, grid[1] * 4.5),
-                    height = max(8, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    par(mfrow = c(grid[2], grid[1]), mar = c(5, 5, 5, 5), oma = c(4, 0, 4, 0))
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
   }
+
+  if (save_fig == TRUE) {
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "mortality_af_heat_month_plot.pdf"),
+      n_plots = length(attr_mth_list),
+      max_cols = 2,
+      panel_width = 7,
+      panel_height = 6.6,
+      mar = c(7.2, 5, 3.2, 6),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+  cols = get_accessible_palette()
 
   ylim_max <- max(sapply(attr_mth_list,
                          function(x) max(x$af_heat, na.rm = TRUE)))
@@ -2353,11 +2679,41 @@ hc_plot_af_heat_monthly <- function(attr_mth_list,
   ylim <- c(min(0, temp_ticks[1] * scale_factor),
             max(temp_ticks[length(temp_ticks)] * scale_factor, ylim_max))
 
+  year_range <- paste0(
+    "(",
+    min(sapply(df_list, function(x) min(lubridate::year(x$date),
+                                        na.rm = TRUE))),
+    "-",
+    max(sapply(df_list, function(x) max(lubridate::year(x$date),
+                                        na.rm = TRUE))),
+    ")"
+  )
+
+
+  main_title <- paste0(
+    "Attributable fraction of high temperature mortality by calendar month and region,\n",
+    country, " ", year_range
+  )
+
+
+  sub_title <- paste(
+    "Each panel shows high temperature attributable fraction by calendar month as bars,",
+    "with a line showing mean monthly temperature."
+  )
+
+  alt_text <- paste(
+    "Alt text: Multi-panel chart showing attributable fraction of high temperature mortality by month and region.",
+    "Each panel contains rose-coloured bars for high temperature attributable fraction and a darker rose line for mean monthly temperature.",
+    "A right-hand axis shows mean temperature in degrees Celsius."
+  )
+
+
   for (geog in names(attr_mth_list)) {
     geog_af <- attr_mth_list[[geog]]
     geog_temp <- df_list[[geog]]$temp
 
     temp_scaled <- geog_af$temp * scale_factor
+    par(mar = c(7.2, 5, 3.2, 6))
 
     bar_pos <- barplot(
       names.arg = substr(geog_af$month, 1, 1),
@@ -2366,6 +2722,10 @@ hc_plot_af_heat_monthly <- function(attr_mth_list,
       xlab = "Month",
       ylab = "High temperature AF (%)",
       main = geog,
+      cex.main = 1.35,
+      cex.names = 1.0,
+      cex.lab = 1.2,
+      cex.axis = 1.1,
       col = "#C75E70"
     )
 
@@ -2387,21 +2747,17 @@ hc_plot_af_heat_monthly <- function(attr_mth_list,
       col = "black"
     )
 
-    mtext("Mean Temp (\u00b0C)", side = 4, line = 3, col = "black", cex = 0.7)
+    mtext("Mean Temperature (\u00b0C)", side = 4, line = 3, col = "black", cex = 0.8)
 
-    abline(
-      h = 0,
-      col = "black",
-      lty = 1
-    )
+    abline(h = 0, col = "black", lty = 1)
 
     attr_thr_high_tmp <- round(quantile(geog_temp,
                                         attr_thr_high / 100, na.rm = TRUE), 2)
-    af_leg_lab <- paste0("High temperature AF (%) - from treshold, ",
+    af_leg_lab <- paste0("High temperature AF (%) - from threshold, ",
                          attr_thr_high_tmp, "\u00b0C (", attr_thr_high, "p)")
 
     legend("topleft",
-      inset = c(0, -0.05),
+      inset = c(0, -0.02),
       legend = c(af_leg_lab, "Mean Temp (\u00b0C)"),
       fill = c("#C75E70", NA),
       border = NA,
@@ -2409,27 +2765,13 @@ hc_plot_af_heat_monthly <- function(attr_mth_list,
       pch = c(NA, 16),
       col = c("#C75E70", "#a04b58"),
       bty = "n",
-      cex = 0.9,
+      cex = 1.1,
       horiz = FALSE,
       xpd = TRUE
     )
   }
 
   if (save_fig == TRUE) {
-    year_range <- paste0(
-      "(",
-      min(sapply(df_list, function(x) min(lubridate::year(x$date),
-                                          na.rm = TRUE))),
-      "-",
-      max(sapply(df_list, function(x) max(lubridate::year(x$date),
-                                          na.rm = TRUE))),
-      ")"
-    )
-
-    title <- paste0("Attributable fraction of high temperature mortality by
-                    calendar month and geography, ", country, " ", year_range)
-
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
 
     af_heat_ci_min <- min(sapply(attr_mth_list,
                                  function(x) min(x$af_heat_lower_ci,
@@ -2441,16 +2783,24 @@ hc_plot_af_heat_monthly <- function(attr_mth_list,
 
     ci_warning <- sprintf("Warning: CI's range from %.2f%% to %.2f%%",
                           af_heat_ci_range[1], af_heat_ci_range[2])
-    ovr_warning <- "(Please refer to the associated data table for more
-                    information on the uncertainty around each estimate)"
+    ovr_warning <- "(Please refer to the associated data table for more information on the uncertainty around each estimate)"
 
-    mtext(ci_warning, outer = TRUE,
-          side = 1, line = 1, cex = 0.8, col = "red", font = 3)
-    mtext(ovr_warning, outer = TRUE,
-          side = 1, line = 2, cex = 0.8, col = "red", font = 3)
+    mtext(ci_warning, side = 1, line = 4.6, cex = 0.72, col = "red",
+          adj = 0, font = 3)
+    mtext(ovr_warning, side = 1, line = 5.9, cex = 0.72, col = "red",
+          adj = 0, font = 3)
+
   }
 
   if (save_fig == TRUE) {
+
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 4.5,
+      line_subtitle = 2.2
+    )
+    add_accessible_alt_text(alt_text = alt_text)
     dev.off()
   }
 }
@@ -2483,19 +2833,22 @@ hc_plot_af_cold_monthly <- function(attr_mth_list,
                                     attr_thr_low = 2.5,
                                     save_fig = FALSE,
                                     output_folder_path = NULL) {
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
+  }
   if (save_fig == TRUE) {
-    grid <- c(min(length(attr_mth_list), 3),
-              ceiling(length(attr_mth_list) / 3))
-    output_path <- file.path(output_folder_path,
-                             "mortality_af_cold_month_plot.pdf")
-    pdf(output_path, width = max(10, grid[1] * 4.5),
-                    height = max(8, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    par(mfrow = c(grid[2], grid[1]), mar = c(5, 5, 5, 5), oma = c(4, 0, 4, 0))
-  } else {
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "mortality_af_cold_month_plot.pdf"),
+      n_plots = length(attr_mth_list),
+      max_cols = 2,
+      panel_width = 7,
+      panel_height = 6.6,
+      mar = c(7.2, 5, 3.2, 6),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+  else {
     old_par <- graphics::par(c("mfrow", "mar", "oma", "xpd", "cex", "mex"))
     on.exit(do.call(graphics::par, old_par), add = TRUE)
     graphics::par(
@@ -2507,6 +2860,7 @@ hc_plot_af_cold_monthly <- function(attr_mth_list,
       mex = 1
     )
   }
+  cols = get_accessible_palette()
 
   ylim_max <- max(sapply(attr_mth_list,
                          function(x) max(x$af_cold, na.rm = TRUE)))
@@ -2522,12 +2876,39 @@ hc_plot_af_cold_monthly <- function(attr_mth_list,
 
   ylim <- c(min(0, temp_ticks[1] * scale_factor),
             max(temp_ticks[length(temp_ticks)] * scale_factor, ylim_max))
+  year_range <- paste0(
+    "(",
+    min(sapply(df_list, function(x) min(lubridate::year(x$date),
+                                        na.rm = TRUE))),
+    "-",
+    max(sapply(df_list, function(x) max(lubridate::year(x$date),
+                                        na.rm = TRUE))),
+    ")"
+  )
+
+  main_title <- paste0(
+    "Attributable fraction of low temperature mortality by calendar month and region,\n",
+    country, " ", year_range
+  )
+
+
+  sub_title <- paste(
+    "Each panel shows low temperature attributable fraction by calendar month as bars,",
+    "with a line showing mean monthly temperature."
+  )
+
+  alt_text <- paste(
+    "Alt text: Multi-panel chart showing attributable fraction of low temperature mortality by month and region.",
+    "Each panel contains blue-coloured bars for low temperature attributable fraction and a darker blue line for mean monthly temperature.",
+    "A right-hand axis shows mean temperature in degrees Celsius."
+  )
 
   for (geog in names(attr_mth_list)) {
     geog_af <- attr_mth_list[[geog]]
     geog_temp <- df_list[[geog]]$temp
 
     temp_scaled <- geog_af$temp * scale_factor
+    par(mar = c(7.2, 5, 3.2, 6))
 
     bar_pos <- barplot(
       names.arg = substr(geog_af$month, 1, 1),
@@ -2536,6 +2917,10 @@ hc_plot_af_cold_monthly <- function(attr_mth_list,
       xlab = "Month",
       ylab = "Low temperature AF (%)",
       main = geog,
+      cex.main = 1.35,
+      cex.names = 1.0,
+      cex.lab = 1.2,
+      cex.axis = 1.1,
       col = "#296991"
     )
 
@@ -2548,7 +2933,6 @@ hc_plot_af_cold_monthly <- function(attr_mth_list,
     )
 
     # Add secondary axis on the right
-
     axis(
       side = 4,
       at = temp_ticks * scale_factor,
@@ -2557,21 +2941,17 @@ hc_plot_af_cold_monthly <- function(attr_mth_list,
       col = "black"
     )
 
-    mtext("Mean Temp (\u00b0C)", side = 4, line = 3, col = "black", cex = 0.7)
+    mtext("Mean Temp (\u00b0C)", side = 4, line = 3, col = "black", cex = 0.8)
 
-    abline(
-      h = 0,
-      col = "black",
-      lty = 1
-    )
+    abline(h = 0, col = "black", lty = 1)
 
     attr_thr_low_tmp <- round(quantile(geog_temp, attr_thr_low / 100,
                                        na.rm = TRUE), 2)
-    af_leg_lab <- paste0("Low temperature AF (%) - from treshold, ",
+    af_leg_lab <- paste0("Low temperature AF (%) - from threshold, ",
                          attr_thr_low_tmp, "\u00b0C (", attr_thr_low, "p)")
 
     legend("topleft",
-      inset = c(0, -0.05),
+      inset = c(0, -0.02),
       legend = c(af_leg_lab, "Mean Temp (\u00b0C)"),
       fill = c("#296991", NA),
       border = NA,
@@ -2579,28 +2959,13 @@ hc_plot_af_cold_monthly <- function(attr_mth_list,
       pch = c(NA, 16),
       col = c("#296991", "#0A2E4D"),
       bty = "n",
-      cex = 0.9,
+      cex = 1.1,
       horiz = FALSE,
       xpd = TRUE
     )
   }
 
   if (save_fig == TRUE) {
-    year_range <- paste0(
-      "(",
-      min(sapply(df_list, function(x) min(lubridate::year(x$date),
-                                          na.rm = TRUE))),
-      "-",
-      max(sapply(df_list, function(x) max(lubridate::year(x$date),
-                                          na.rm = TRUE))),
-      ")"
-    )
-
-    title <- paste0("Attributable fraction of low temperature mortality by
-                    calendar month and geography, ", country, " ", year_range)
-
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-
     af_cold_ci_min <- min(sapply(attr_mth_list,
                                  function(x) min(x$af_cold_lower_ci,
                                                  na.rm = TRUE)))
@@ -2611,17 +2976,27 @@ hc_plot_af_cold_monthly <- function(attr_mth_list,
 
     ci_warning <- sprintf("Warning: CI's range from %.2f%% to %.2f%%",
                           af_cold_ci_range[1], af_cold_ci_range[2])
-    ovr_warning <- "(Please refer to the associated data table for more
-                    information on the uncertainty around each estimate)"
+    ovr_warning <- "(Please refer to the associated data table for more information on the uncertainty around each estimate)"
 
-    mtext(ci_warning, outer = TRUE,
-          side = 1, line = 1, cex = 0.8, col = "red", font = 3)
-    mtext(ovr_warning, outer = TRUE,
-          side = 1, line = 2, cex = 0.8, col = "red", font = 3)
+    mtext(ci_warning, side = 1, line = 4.6, cex = 0.72, col = "red",
+          adj = 0, font = 3)
+    mtext(ovr_warning, side = 1, line = 5.9, cex = 0.72, col = "red",
+          adj = 0, font = 3)
+  }
 
+  if (save_fig == TRUE) {
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 4.5,
+      line_subtitle = 2.2
+    )
+
+    add_accessible_alt_text(alt_text = alt_text)
     dev.off()
   }
 }
+
 
 #' Plot attributable rates by calendar month - high temperatures
 #'
@@ -2651,19 +3026,22 @@ hc_plot_ar_heat_monthly <- function(attr_mth_list,
                                     attr_thr_high = 97.5,
                                     save_fig = FALSE,
                                     output_folder_path = NULL) {
-  if (save_fig == TRUE) {
-    grid <- c(min(length(attr_mth_list), 3),
-              ceiling(length(attr_mth_list) / 3))
-    output_path <- file.path(output_folder_path,
-                             "mortality_ar_heat_month_plot.pdf")
-    pdf(output_path, width = max(10, grid[1] * 4.5),
-                    height = max(8, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    par(mfrow = c(grid[2], grid[1]), mar = c(5, 5, 5, 5), oma = c(4, 0, 4, 0))
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
   }
+  if (save_fig == TRUE) {
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "mortality_ar_heat_month_plot.pdf"),
+      n_plots = length(attr_mth_list),
+      max_cols = 2,
+      panel_width = 7,
+      panel_height = 6.6,
+      mar = c(7.2, 5, 3.2, 6),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+  cols = get_accessible_palette()
 
   ylim_max <- max(sapply(attr_mth_list,
                          function(x) max(x$ar_heat, na.rm = TRUE)))
@@ -2679,12 +3057,40 @@ hc_plot_ar_heat_monthly <- function(attr_mth_list,
 
   ylim <- c(min(0, temp_ticks[1] * scale_factor),
             max(temp_ticks[length(temp_ticks)] * scale_factor, ylim_max))
+  year_range <- paste0(
+    "(",
+    min(sapply(df_list, function(x) min(lubridate::year(x$date),
+                                        na.rm = TRUE))),
+    "-",
+    max(sapply(df_list, function(x) max(lubridate::year(x$date),
+                                        na.rm = TRUE))),
+    ")"
+  )
+
+  main_title <- paste0(
+    "Attributable rate of high temperature mortality by calendar month and region,\n",
+    country, " ", year_range
+  )
+
+
+  sub_title <- paste(
+    "Each panel shows high temperature attributable rate by calendar month as bars,",
+    "with a line showing mean monthly temperature."
+  )
+
+  alt_text <- paste(
+    "Alt text: Multi-panel chart showing attributable rate of high temperature mortality by month and region.",
+    "Each panel contains rose-coloured bars for high temperature attributable rate and a darker rose line for mean monthly temperature.",
+    "A right-hand axis shows mean temperature in degrees Celsius."
+  )
+
 
   for (geog in names(attr_mth_list)) {
     geog_ar <- attr_mth_list[[geog]]
     geog_temp <- df_list[[geog]]$temp
 
     temp_scaled <- geog_ar$temp * scale_factor
+    par(mar = c(7.2, 5, 3.2, 6))
 
     bar_pos <- barplot(
       names.arg = substr(geog_ar$month, 1, 1),
@@ -2693,6 +3099,10 @@ hc_plot_ar_heat_monthly <- function(attr_mth_list,
       xlab = "Month",
       ylab = "High temperature AR (per 100,000 population)",
       main = geog,
+      cex.main = 1.35,
+      cex.names = 1.0,
+      cex.lab = 1.2,
+      cex.axis = 1.1,
       col = "#c75e70"
     )
 
@@ -2712,13 +3122,9 @@ hc_plot_ar_heat_monthly <- function(attr_mth_list,
       col = "black"
     )
 
-    mtext("Mean Temp (\u00b0C)", side = 4, line = 3, col = "black", cex = 0.7)
+    mtext("Mean Temp (\u00b0C)", side = 4, line = 3, col = "black", cex = 0.8)
 
-    abline(
-      h = 0,
-      col = "black",
-      lty = 1
-    )
+    abline(h = 0, col = "black", lty = 1)
 
     attr_thr_high_tmp <- round(quantile(geog_temp,
                                         attr_thr_high / 100, na.rm = TRUE), 2)
@@ -2726,7 +3132,7 @@ hc_plot_ar_heat_monthly <- function(attr_mth_list,
                          attr_thr_high_tmp, "\u00b0C (", attr_thr_high, "p)")
 
     legend("topleft",
-      inset = c(0, -0.05),
+      inset = c(0, -0.02),
       legend = c(ar_leg_lab, "Mean Temp (\u00b0C)"),
       fill = c("#c75e70", NA),
       border = NA,
@@ -2734,28 +3140,13 @@ hc_plot_ar_heat_monthly <- function(attr_mth_list,
       pch = c(NA, 16),
       col = c("#c75e70", "#a04b58"),
       bty = "n",
-      cex = 0.9,
+      cex = 1.1,
       horiz = FALSE,
       xpd = TRUE
     )
   }
 
   if (save_fig == TRUE) {
-    year_range <- paste0(
-      "(",
-      min(sapply(df_list, function(x) min(lubridate::year(x$date),
-                                          na.rm = TRUE))),
-      "-",
-      max(sapply(df_list, function(x) max(lubridate::year(x$date),
-                                          na.rm = TRUE))),
-      ")"
-    )
-
-    title <- paste0("Attributable rate of high temperature mortality by
-                    calendar month and geography, ", country, " ", year_range)
-
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-
     ar_heat_ci_min <- min(sapply(attr_mth_list,
                                  function(x) min(x$ar_heat_lower_ci,
                                                  na.rm = TRUE)))
@@ -2764,16 +3155,24 @@ hc_plot_ar_heat_monthly <- function(attr_mth_list,
                                                  na.rm = TRUE)))
     ar_heat_ci_range <- c(ar_heat_ci_min, ar_heat_ci_max)
 
-    ci_warning <- sprintf("Warning: CI's range from %.2f to %.2f per 100,000
-                          population",
+    ci_warning <- sprintf("Warning: CI's range from %.2f to %.2f per 100,000 population",
                           ar_heat_ci_range[1], ar_heat_ci_range[2])
-    ovr_warning <- "(Please refer to the associated data table for more
-                    information on the uncertainty around each estimate)"
+    ovr_warning <- "(Please refer to the associated data table for more information on the uncertainty around each estimate)"
 
-    mtext(ci_warning, outer = TRUE,
-          side = 1, line = 1, cex = 0.8, col = "red", font = 3)
-    mtext(ovr_warning, outer = TRUE,
-          side = 1, line = 2, cex = 0.8, col = "red", font = 3)
+    mtext(ci_warning, side = 1, line = 4.6, cex = 0.72, col = "red",
+          adj = 0, font = 3)
+    mtext(ovr_warning, side = 1, line = 5.9, cex = 0.72, col = "red",
+          adj = 0, font = 3)
+  }
+  if (save_fig == TRUE) {
+
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 4.5,
+      line_subtitle = 2.2
+    )
+    add_accessible_alt_text(alt_text = alt_text)
     dev.off()
   }
 }
@@ -2806,19 +3205,22 @@ hc_plot_ar_cold_monthly <- function(attr_mth_list,
                                     attr_thr_low = 2.5,
                                     save_fig = FALSE,
                                     output_folder_path = NULL) {
-  if (save_fig == TRUE) {
-    grid <- c(min(length(attr_mth_list), 3),
-              ceiling(length(attr_mth_list) / 3))
-    output_path <- file.path(output_folder_path,
-                             "mortality_ar_cold_month_plot.pdf")
-    pdf(output_path, width = max(10, grid[1] * 4.5),
-                    height = max(8, grid[2] * 4.5))
-    pdf_dev_id <- grDevices::dev.cur()
-    on.exit(substitute(if (grDevices::dev.cur() == ID) grDevices::dev.off(),
-                       list(ID = pdf_dev_id)), add = TRUE)
-
-    par(mfrow = c(grid[2], grid[1]), mar = c(5, 5, 5, 5), oma = c(4, 0, 4, 0))
+  if (!save_fig) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
   }
+  if (save_fig == TRUE) {
+    open_accessible_pdf(
+      file = file.path(output_folder_path, "mortality_ar_cold_month_plot.pdf"),
+      n_plots = length(attr_mth_list),
+      max_cols = 2,
+      panel_width = 7,
+      panel_height = 6.6,
+      mar = c(7.2, 5, 3.2, 6),
+      oma = c(7.5, 0.6, 9, 0.6)
+    )
+  }
+  cols = get_accessible_palette()
 
   ylim_max <- max(sapply(attr_mth_list,
                          function(x) max(x$ar_cold, na.rm = TRUE)))
@@ -2834,12 +3236,39 @@ hc_plot_ar_cold_monthly <- function(attr_mth_list,
 
   ylim <- c(min(0, temp_ticks[1] * scale_factor),
             max(temp_ticks[length(temp_ticks)] * scale_factor, ylim_max))
+  year_range <- paste0(
+    "(",
+    min(sapply(df_list, function(x) min(lubridate::year(x$date),
+                                        na.rm = TRUE))),
+    "-",
+    max(sapply(df_list, function(x) max(lubridate::year(x$date),
+                                        na.rm = TRUE))),
+    ")"
+  )
+  main_title <- paste0(
+    "Attributable rate of low temperature mortality by calendar month and region,\n",
+    country, " ", year_range
+  )
+
+
+  sub_title <- paste(
+    "Each panel shows low temperature attributable rate by calendar month as bars,",
+    "with a line showing mean monthly temperature."
+  )
+
+  alt_text <- paste(
+    "Alt text: Multi-panel chart showing attributable rate of low temperature mortality by month and region.",
+    "Each panel contains blue-coloured bars for high temperature attributable rate and a darker blue line for mean monthly temperature.",
+    "A right-hand axis shows mean temperature in degrees Celsius."
+  )
+
 
   for (geog in names(attr_mth_list)) {
     geog_ar <- attr_mth_list[[geog]]
     geog_temp <- df_list[[geog]]$temp
 
     temp_scaled <- geog_ar$temp * scale_factor
+    par(mar = c(7.2, 5, 3.2, 6))
 
     bar_pos <- barplot(
       names.arg = substr(geog_ar$month, 1, 1),
@@ -2848,6 +3277,10 @@ hc_plot_ar_cold_monthly <- function(attr_mth_list,
       xlab = "Month",
       ylab = "Low temperature AR (per 100,000 population)",
       main = geog,
+      cex.main = 1.35,
+      cex.names = 1.0,
+      cex.lab = 1.2,
+      cex.axis = 1.1,
       col = "#296991"
     )
 
@@ -2867,13 +3300,9 @@ hc_plot_ar_cold_monthly <- function(attr_mth_list,
       col = "black"
     )
 
-    mtext("Mean Temp (\u00b0C)", side = 4, line = 3, col = "black", cex = 0.7)
+    mtext("Mean Temp (\u00b0C)", side = 4, line = 3, col = "black", cex = 0.8)
 
-    abline(
-      h = 0,
-      col = "black",
-      lty = 1
-    )
+    abline(h = 0, col = "black", lty = 1)
 
     attr_thr_low_tmp <- round(quantile(geog_temp, attr_thr_low / 100,
                                        na.rm = TRUE), 2)
@@ -2881,7 +3310,7 @@ hc_plot_ar_cold_monthly <- function(attr_mth_list,
                          attr_thr_low_tmp, "\u00b0C (", attr_thr_low, "p)")
 
     legend("topleft",
-      inset = c(0, -0.05),
+      inset = c(0, -0.03),
       legend = c(ar_leg_lab, "Mean Temp (\u00b0C)"),
       fill = c("#296991", NA),
       border = NA,
@@ -2889,28 +3318,13 @@ hc_plot_ar_cold_monthly <- function(attr_mth_list,
       pch = c(NA, 16),
       col = c("#296991", "#0A2E4D"),
       bty = "n",
-      cex = 0.9,
+      cex = 1.1,
       horiz = FALSE,
       xpd = TRUE
     )
   }
 
   if (save_fig == TRUE) {
-    year_range <- paste0(
-      "(",
-      min(sapply(df_list, function(x) min(lubridate::year(x$date),
-                                          na.rm = TRUE))),
-      "-",
-      max(sapply(df_list, function(x) max(lubridate::year(x$date),
-                                          na.rm = TRUE))),
-      ")"
-    )
-
-    title <- paste0("Attributable rate of low temperature mortality by
-                    calendar month and geography, ", country, " ", year_range)
-
-    mtext(title, outer = TRUE, cex = 1.5, line = 1, font = 2)
-
     ar_cold_ci_min <- min(sapply(attr_mth_list,
                                  function(x) min(x$ar_cold_lower_ci,
                                                  na.rm = TRUE)))
@@ -2919,16 +3333,24 @@ hc_plot_ar_cold_monthly <- function(attr_mth_list,
                                                  na.rm = TRUE)))
     ar_cold_ci_range <- c(ar_cold_ci_min, ar_cold_ci_max)
 
-    ci_warning <- sprintf("Warning: CI's range from %.2f to %.2f per 100,000
-                          population",
+    ci_warning <- sprintf("Warning: CI's range from %.2f to %.2f per 100,000 population",
                           ar_cold_ci_range[1], ar_cold_ci_range[2])
-    ovr_warning <- "(Please refer to the associated data table for more
-                    information on the uncertainty around each estimate)"
+    ovr_warning <- "(Please refer to the associated data table for more information on the uncertainty around each estimate)"
 
-    mtext(ci_warning, outer = TRUE,
-          side = 1, line = 1, cex = 0.8, col = "red", font = 3)
-    mtext(ovr_warning, outer = TRUE,
-          side = 1, line = 2, cex = 0.8, col = "red", font = 3)
+    mtext(ci_warning, side = 1, line = 4.6, cex = 0.72, col = "red",
+          adj = 0, font = 3)
+    mtext(ovr_warning, side = 1, line = 5.9, cex = 0.72, col = "red",
+          adj = 0, font = 3)
+  }
+  if (save_fig == TRUE) {
+
+    run_accessible_pdf_plot(
+      title = main_title,
+      subtitle = sub_title,
+      line_title = 4.5,
+      line_subtitle = 2.2
+    )
+    add_accessible_alt_text(alt_text = alt_text)
     dev.off()
   }
 }
@@ -3062,6 +3484,8 @@ hc_save_results <- function(rr_results,
 #' model validation as confounders. Defaults to NULL.
 #' @param control_cols List. Confounders to include in the final model
 #' adjustment. Defaults to NULL.
+#' @param df_control Integer. Degrees of freedom for natural splines applied to
+#' control variables. Defaults to 3.
 #' @param var_fun Character. Exposure function for argvar
 #' (see dlnm::crossbasis). Defaults to 'bs'.
 #' @param var_degree Integer. Degree of the piecewise polynomial for argvar
@@ -3085,6 +3509,23 @@ hc_save_results <- function(rr_results,
 #' saved. Defaults to NULL.
 #' @param seed Optional integer random seed used when sampling residuals for
 #' model validation plots. Defaults to NULL.
+#' @param run_descriptive Logical. Whether to run descriptive statistics. Default FALSE.
+#' @param plot_corr_matrix Logical. Plot correlation matrix. Default TRUE.
+#' @param correlation_method Character. Correlation method for corr matrix
+#' (e.g.,"pearson", "spearman"). Default "pearson".
+#' @param plot_dist Logical. Plot distributions (hist/density) for key variables.
+#' Default TRUE.
+#' @param plot_na_counts Logical. Plot missingness/NA counts. Default TRUE.
+#' @param plot_scatter Logical. Plot scatter plots for key pairs. Default TRUE.
+#' @param plot_box Logical. Plot boxplots by region/season where applicable.
+#' Default TRUE.
+#' @param plot_seasonal Logical. Plot seasonal summaries. Default TRUE.
+#' @param plot_regional Logical. Plot regional summaries. Default TRUE.
+#' @param plot_total Logical. Plot overall totals where relevant. Default TRUE.
+#' @param detect_outliers Logical. Flag potential outliers in descriptive workflow.
+#' Default TRUE.
+#' @param calculate_rate Logical. Whether to calculate rate variables during
+#' descriptive stats (e.g., deaths per population). Default FALSE
 #'
 #' @examples
 #' \donttest{
@@ -3175,6 +3616,7 @@ temp_mortality_do_analysis <- function(data_path,
                                        country = "National",
                                        independent_cols = NULL,
                                        control_cols = NULL,
+                                       df_control = 3,
                                        var_fun = "bs",
                                        var_degree = 2,
                                        var_per = c(10, 75, 90),
@@ -3182,12 +3624,37 @@ temp_mortality_do_analysis <- function(data_path,
                                        lagnk = 3,
                                        dfseas = 8,
                                        meta_analysis = FALSE,
-    attr_thr_high = 97.5,
-    attr_thr_low = 2.5,
-    save_fig = FALSE,
-    save_csv = FALSE,
-    output_folder_path = NULL,
-    seed = NULL) {
+                                       attr_thr_high = 97.5,
+                                       attr_thr_low = 2.5,
+                                       save_fig = FALSE,
+                                       save_csv = FALSE,
+                                       output_folder_path = NULL,
+                                       seed = NULL,
+                                       # Descriptive statistics settings
+                                       run_descriptive = FALSE,
+                                       plot_corr_matrix = TRUE,
+                                       correlation_method = "pearson",
+                                       plot_dist = TRUE,
+                                       plot_na_counts = TRUE,
+                                       plot_scatter = TRUE,
+                                       plot_box = TRUE,
+                                       plot_seasonal = TRUE,
+                                       plot_regional = TRUE,
+                                       plot_total = TRUE,
+                                       detect_outliers = TRUE,
+                                       calculate_rate = FALSE) {
+
+  # When invoked via the plumber API, headless R has no graphics device and
+  # plots can't be returned over JSON — the client renders its own. Force
+  # all side-effectful output parameters off so internal helpers never try
+  # to draw or write files.
+  api_mode <- isTRUE(getOption("climatehealth.api_mode", FALSE))
+  if (api_mode) {
+    save_fig <- FALSE
+    save_csv <- FALSE
+    output_folder_path <- NULL
+  }
+
   # Setup additional output DIR
   if (!is.null(output_folder_path)) {
     # Check output dir exists
@@ -3230,6 +3697,65 @@ temp_mortality_do_analysis <- function(data_path,
     population_col = population_col
   )
 
+  if (isTRUE(meta_analysis) && length(df_list) < 2) {
+    warning(
+      "meta_analysis = TRUE requires multiple regions. ",
+      "The data contain only one aggregated region, so meta_analysis has been set to FALSE."
+    )
+    meta_analysis <- FALSE
+  }
+
+  # run descriptive stats if selected
+  if (run_descriptive) {
+    # Guard checks incase of missing output folder
+    if (is.null(output_folder_path)) {
+      stop("run_descriptive = TRUE requires output_folder_path to be set.")
+    }
+
+    # Setup descriptive stats subfolder (run-scoped)
+    descriptive_output_path <- file.path(output_folder_path, "descriptive_stats")
+    dir.create(descriptive_output_path, recursive = TRUE, showWarnings = FALSE)
+
+    # run descriptive stats
+      tryCatch(
+        {
+          run_descriptive_stats(
+            data = df_list,
+            output_path = output_folder_path,
+            aggregation_column = "region",
+            population_col = "population",
+            dependent_col = "deaths",
+            independent_cols = c("temp", independent_cols),
+            timeseries_col = "date",
+            plot_corr_matrix = plot_corr_matrix,
+            correlation_method = correlation_method,
+            plot_dist = plot_dist,
+            plot_ma = TRUE,
+            ma_days = 100,
+            ma_sides = 1,
+            plot_na_counts = plot_na_counts,
+            plot_scatter = plot_scatter,
+            plot_box = plot_box,
+            plot_seasonal = plot_seasonal,
+            plot_regional = plot_regional,
+            plot_total = plot_total,
+            detect_outliers = detect_outliers,
+            calculate_rate = calculate_rate,
+            create_base_dir = FALSE
+          )
+        },
+        error = function(e) {
+          stop(
+            paste0(
+              "\nDescriptive statistics failed and the pipeline has been halted.\n",
+              "Reason: ", e$message
+            ),
+            call. = FALSE
+          )
+        }
+      )
+  }
+
   pop_list <- dlnm_pop_totals(
     df_list = df_list,
     country = country,
@@ -3260,12 +3786,14 @@ temp_mortality_do_analysis <- function(data_path,
   qaic_summary <- model_validation[[2]]
   vif_results <- model_validation[[3]]
   vif_summary <- model_validation[[4]]
+  adf_results <- model_validation[[5]]
 
   model_list <- hc_quasipoisson_dlnm(
     df_list = df_list,
     control_cols = control_cols,
     cb_list = cb_list,
-    dfseas = dfseas
+    dfseas = dfseas,
+    df_control = df_control
   )
 
   reduced <- dlnm_reduce_cumulative(
@@ -3278,6 +3806,10 @@ temp_mortality_do_analysis <- function(data_path,
   coef_ <- reduced[[1]]
   vcov_ <- reduced[[2]]
 
+  mm <- NULL
+  blup <- NULL
+  meta_test_res <- NULL
+
   if (meta_analysis == TRUE) {
     meta <- dlnm_meta_analysis(
       df_list = df_list,
@@ -3286,11 +3818,10 @@ temp_mortality_do_analysis <- function(data_path,
       save_csv = save_csv,
       output_folder_path = output_folder_path
     )
+
     mm <- meta[[1]]
     blup <- meta[[2]]
     meta_test_res <- meta[[3]]
-  } else {
-    blup <- NULL
   }
 
   min_mort_temp <- dlnm_min_mortality_temp(
@@ -3358,14 +3889,8 @@ temp_mortality_do_analysis <- function(data_path,
   power_list_high <- power_list$high
   power_list_low <- power_list$low
 
-  hc_plot_power(
-    power_list_high = power_list_high,
-    power_list_low = power_list_low,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path,
-    country = country
-  )
-
+  # Compute attributable results unconditionally — the caller (and the
+  # API client) needs the underlying data regardless of plotting.
   rr_results <- hc_rr_results(
     pred_list = pred_list,
     df_list = df_list,
@@ -3374,24 +3899,14 @@ temp_mortality_do_analysis <- function(data_path,
     attr_thr_low = attr_thr_low
   )
 
-  hc_plot_rr(
-    df_list = df_list,
-    pred_list = pred_list,
-    attr_thr_high = attr_thr_high,
-    attr_thr_low = attr_thr_low,
-    minpercgeog_ = minpercgeog_,
-    country = country,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path
-  )
-
   attr_list <- hc_attr(
     df_list = df_list,
     cb_list = cb_list,
     pred_list = pred_list,
     minpercgeog_ = minpercgeog_,
     attr_thr_high = attr_thr_high,
-    attr_thr_low = attr_thr_low
+    attr_thr_low = attr_thr_low,
+    seed = seed
   )
 
   attr_tables <- hc_attr_tables(
@@ -3403,85 +3918,109 @@ temp_mortality_do_analysis <- function(data_path,
   attr_yr_list <- attr_tables[[2]]
   attr_mth_list <- attr_tables[[3]]
 
-  hc_plot_attr_heat_totals(
-    df_list = df_list,
-    res_attr_tot = res_attr_tot,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path,
-    country = country
-  )
+  # Plot helpers each have a "plot to default device" branch that doesn't
+  # work in headless / API mode. Skip the whole battery when save_fig is
+  # FALSE — the API client renders its own charts off the returned data.
+  if (isTRUE(save_fig)) {
+    hc_plot_power(
+      power_list_high = power_list_high,
+      power_list_low = power_list_low,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path,
+      country = country
+    )
 
-  hc_plot_attr_cold_totals(
-    df_list = df_list,
-    res_attr_tot = res_attr_tot,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path,
-    country = country
-  )
+    hc_plot_rr(
+      df_list = df_list,
+      pred_list = pred_list,
+      attr_thr_high = attr_thr_high,
+      attr_thr_low = attr_thr_low,
+      minpercgeog_ = minpercgeog_,
+      country = country,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path
+    )
 
-  hc_plot_af_heat_yearly(
-    attr_yr_list = attr_yr_list,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path,
-    country = country
-  )
+    hc_plot_attr_heat_totals(
+      df_list = df_list,
+      res_attr_tot = res_attr_tot,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path,
+      country = country
+    )
 
-  hc_plot_af_cold_yearly(
-    attr_yr_list = attr_yr_list,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path,
-    country = country
-  )
+    hc_plot_attr_cold_totals(
+      df_list = df_list,
+      res_attr_tot = res_attr_tot,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path,
+      country = country
+    )
 
-  hc_plot_ar_heat_yearly(
-    attr_yr_list = attr_yr_list,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path,
-    country = country
-  )
+    hc_plot_af_heat_yearly(
+      attr_yr_list = attr_yr_list,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path,
+      country = country
+    )
 
-  hc_plot_ar_cold_yearly(
-    attr_yr_list = attr_yr_list,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path,
-    country = country
-  )
+    hc_plot_af_cold_yearly(
+      attr_yr_list = attr_yr_list,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path,
+      country = country
+    )
 
-  hc_plot_af_heat_monthly(
-    attr_mth_list = attr_mth_list,
-    df_list = df_list,
-    country = country,
-    attr_thr_high = attr_thr_high,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path
-  )
+    hc_plot_ar_heat_yearly(
+      attr_yr_list = attr_yr_list,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path,
+      country = country
+    )
 
-  hc_plot_af_cold_monthly(
-    attr_mth_list = attr_mth_list,
-    df_list = df_list,
-    country = country,
-    attr_thr_low = attr_thr_low,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path
-  )
+    hc_plot_ar_cold_yearly(
+      attr_yr_list = attr_yr_list,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path,
+      country = country
+    )
 
-  hc_plot_ar_heat_monthly(
-    attr_mth_list = attr_mth_list,
-    df_list = df_list,
-    country = country,
-    attr_thr_high = attr_thr_high,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path
-  )
+    hc_plot_af_heat_monthly(
+      attr_mth_list = attr_mth_list,
+      df_list = df_list,
+      country = country,
+      attr_thr_high = attr_thr_high,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path
+    )
 
-  hc_plot_ar_cold_monthly(
-    attr_mth_list = attr_mth_list,
-    df_list = df_list,
-    country = country,
-    attr_thr_low = attr_thr_low,
-    save_fig = save_fig,
-    output_folder_path = output_folder_path
-  )
+    hc_plot_af_cold_monthly(
+      attr_mth_list = attr_mth_list,
+      df_list = df_list,
+      country = country,
+      attr_thr_low = attr_thr_low,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path
+    )
+
+    hc_plot_ar_heat_monthly(
+      attr_mth_list = attr_mth_list,
+      df_list = df_list,
+      country = country,
+      attr_thr_high = attr_thr_high,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path
+    )
+
+    hc_plot_ar_cold_monthly(
+      attr_mth_list = attr_mth_list,
+      df_list = df_list,
+      country = country,
+      attr_thr_low = attr_thr_low,
+      save_fig = save_fig,
+      output_folder_path = output_folder_path
+    )
+  }
 
   if (save_csv == TRUE) {
     hc_save_results(
@@ -3497,10 +4036,18 @@ temp_mortality_do_analysis <- function(data_path,
 
   return(
     list(
+      qaic_results = qaic_results,
+      qaic_summary = qaic_summary,
+      vif_results = vif_results,
+      vif_summary = vif_summary,
+      adf_results = adf_results,
+      meta_test_res = meta_test_res,
+      power_list_high = power_list_high,
+      power_list_low = power_list_low,
       rr_results = rr_results,
-      an_ar_results = res_attr_tot,
-      annual_an_ar_results = attr_yr_list,
-      monthly_an_ar_results = attr_mth_list
+      res_attr_tot = res_attr_tot,
+      attr_yr_list = attr_yr_list,
+      attr_mth_list = attr_mth_list
     )
   )
 }

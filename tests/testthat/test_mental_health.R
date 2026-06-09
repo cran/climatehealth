@@ -14,91 +14,134 @@ temp_dir <- file.path(temp_dir, "mental_health_tests")
 if (!file.exists(temp_dir)) dir.create(temp_dir)
 
 
-test_that("Test mh_read_and_format_data", {
+test_that("mh_read_and_format_data formats data correctly when region column is supplied", {
 
-  # Mocking functions to work around need to have .csv file on drive for test
   mock_check_file_extension <- function(data_path, extension, param_nm) {
-    identical(tools::file_ext(data_path), extension)
+    expect_equal(tools::file_ext(data_path), "csv")
+    expect_equal(extension, ".csv")
+    expect_equal(param_nm, "data_path")
+    invisible(TRUE)
   }
 
-  # mock function also defines our source df
   mock_read_input_data <- function(data_path) {
-    df <- data.frame(
-      date_column = c("2023-01-01", "02-01-2023", "2023-01-03", "04-01-2023", "2023-01-05"),
-      region = c("North", "South", "East", "West", "Central"),
+    data.frame(
+      date_column = c("2023-01-01", "2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"),
+      date = as.Date("1999-01-01") + 0:4,
+      region = c("Ignore", "Ignore", "Ignore", "Ignore", "Ignore"),
       regnames = c("North", "South", "East", "West", "Central"),
-      temp = c(23.5, 25.1, 22.8, 24.3, 21.9),
+      temp = c(-99, -99, -99, -99, -99),
+      tmean = c(23.5, 25.1, 22.8, 24.3, 21.9),
+      suicides = c(-1, -1, -1, -1, -1),
       health_outcomes = c(10.2, 12.5, 9.8, 11.1, 8.7),
+      population = c(1L, 1L, 1L, 1L, 1L),
       pop = c(1000L, 1200L, 950L, 1100L, 1050L)
     )
   }
 
-  # Set mocked bindings
+  mock_aggregate_by_column <- function(df, column) {
+    expect_equal(column, "region")
+    df
+  }
+
   local_mocked_bindings(
     check_file_extension = mock_check_file_extension,
-    read_input_data = mock_read_input_data
-    )
+    read_input_data = mock_read_input_data,
+    aggregate_by_column = mock_aggregate_by_column
+  )
 
-  # Create control df (to test results against)
-  control_df <- data.frame(
-    date = structure(c(19362, 19360, 19358, -718778, -718048), class = "Date"),
-    region = structure(c(1L, 2L, 3L, 4L, 5L), levels = c("Central","East", "North", "South", "West"), class = "factor"),
-    temp = c(21.9, 22.8, 23.5, 25.1, 24.3),
-    suicides = c(8.7, 9.8, 10.2, 12.5, 11.1),
-    population = c(1050L, 950L, 1000L, 1200L, 1100L),
-    year = structure(c(3L, 3L, 3L, 1L, 2L), levels = c("2", "4", "2023"), class = "factor"),
-    month = structure(c(1L, 1L, 1L, 1L, 1L), levels = "1", class = "factor"),
-    dow = structure(c(5L, 3L, 1L, 1L, 3L), levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"), class = c("ordered", "factor")),
-    stratum = structure(c(19L, 38L, 57L, 64L, 94L),
-                        levels = c("Central:2:1:Sun","Central:2:1:Mon", "Central:2:1:Tue",
-                                   "Central:2:1:Wed","Central:2:1:Thu", "Central:2:1:Fri",
-                                   "Central:2:1:Sat", "Central:4:1:Sun", "Central:4:1:Mon",
-                                   "Central:4:1:Tue", "Central:4:1:Wed", "Central:4:1:Thu",
-                                   "Central:4:1:Fri", "Central:4:1:Sat", "Central:2023:1:Sun",
-                                   "Central:2023:1:Mon", "Central:2023:1:Tue", "Central:2023:1:Wed",
-                                   "Central:2023:1:Thu", "Central:2023:1:Fri", "Central:2023:1:Sat",
-                                   "East:2:1:Sun", "East:2:1:Mon", "East:2:1:Tue", "East:2:1:Wed",
-                                   "East:2:1:Thu", "East:2:1:Fri", "East:2:1:Sat", "East:4:1:Sun",
-                                   "East:4:1:Mon", "East:4:1:Tue", "East:4:1:Wed", "East:4:1:Thu",
-                                   "East:4:1:Fri", "East:4:1:Sat", "East:2023:1:Sun",
-                                   "East:2023:1:Mon", "East:2023:1:Tue", "East:2023:1:Wed",
-                                   "East:2023:1:Thu", "East:2023:1:Fri", "East:2023:1:Sat",
-                                   "North:2:1:Sun", "North:2:1:Mon", "North:2:1:Tue",
-                                   "North:2:1:Wed", "North:2:1:Thu", "North:2:1:Fri",
-                                   "North:2:1:Sat", "North:4:1:Sun", "North:4:1:Mon",
-                                   "North:4:1:Tue", "North:4:1:Wed", "North:4:1:Thu",
-                                   "North:4:1:Fri", "North:4:1:Sat", "North:2023:1:Sun",
-                                   "North:2023:1:Mon", "North:2023:1:Tue", "North:2023:1:Wed",
-                                   "North:2023:1:Thu", "North:2023:1:Fri", "North:2023:1:Sat",
-                                   "South:2:1:Sun", "South:2:1:Mon", "South:2:1:Tue",
-                                   "South:2:1:Wed", "South:2:1:Thu", "South:2:1:Fri",
-                                   "South:2:1:Sat", "South:4:1:Sun", "South:4:1:Mon",
-                                   "South:4:1:Tue", "South:4:1:Wed", "South:4:1:Thu",
-                                   "South:4:1:Fri", "South:4:1:Sat", "South:2023:1:Sun",
-                                   "South:2023:1:Mon", "South:2023:1:Tue", "South:2023:1:Wed",
-                                   "South:2023:1:Thu", "South:2023:1:Fri", "South:2023:1:Sat",
-                                   "West:2:1:Sun", "West:2:1:Mon", "West:2:1:Tue", "West:2:1:Wed",
-                                   "West:2:1:Thu", "West:2:1:Fri", "West:2:1:Sat", "West:4:1:Sun",
-                                   "West:4:1:Mon", "West:4:1:Tue", "West:4:1:Wed", "West:4:1:Thu",
-                                   "West:4:1:Fri", "West:4:1:Sat", "West:2023:1:Sun",
-                                   "West:2023:1:Mon", "West:2023:1:Tue", "West:2023:1:Wed",
-                                   "West:2023:1:Thu", "West:2023:1:Fri", "West:2023:1:Sat"),
-                        class = "factor")
-    )
-  control_df <- control_df %>% dplyr::mutate(ind = tapply(.data$suicides, .data$stratum, sum)[.data$stratum])
-  control_test_list <- aggregate_by_column(control_df, "region")
+  expected <- data.frame(
+    date = as.Date(c("2023-01-01", "2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05")),
+    region = c("North", "South", "East", "West", "Central"),
+    temp = c(23.5, 25.1, 22.8, 24.3, 21.9),
+    suicides = c(10.2, 12.5, 9.8, 11.1, 8.7),
+    population = c(1000L, 1200L, 950L, 1100L, 1050L)
+  ) %>%
+    dplyr::mutate(
+      year = as.factor(lubridate::year(date)),
+      month = as.factor(lubridate::month(date)),
+      dow = as.factor(lubridate::wday(date, label = TRUE)),
+      region = as.factor(region),
+      stratum = as.factor(interaction(region, year, month, dow, drop = TRUE)),
+      ind = stats::ave(suicides, stratum, FUN = sum)
+    ) %>%
+    dplyr::arrange(date)
 
-  # Call function
-  mh_test_list <- mh_read_and_format_data("mock_file.csv",
-                            "date_column",
-                            "regnames",
-                            "temp",
-                            "health_outcomes",
-                            "pop")
+  result <- mh_read_and_format_data(
+    "mock_file.csv",
+    "date_column",
+    "regnames",
+    "tmean",
+    "health_outcomes",
+    "pop"
+  )
 
-  # Test for equality between control and result
-  expect_identical(mh_test_list, control_test_list)
+  expect_equal(result, expected)
 })
+
+
+test_that("mh_read_and_format_data formats data correctly when region column is omitted", {
+
+  mock_check_file_extension <- function(data_path, extension, param_nm) {
+    expect_equal(tools::file_ext(data_path), "csv")
+    expect_equal(extension, ".csv")
+    expect_equal(param_nm, "data_path")
+    invisible(TRUE)
+  }
+
+  mock_read_input_data <- function(data_path) {
+    data.frame(
+      date_column = c("2023-01-03", "2023-01-01", "2023-01-02"),
+      date = as.Date("1998-01-01") + 0:2,
+      region = c("Legacy", "Legacy", "Legacy"),
+      temp = c(-5, -5, -5),
+      tmean = c(22.8, 23.5, 25.1),
+      suicides = c(-1, -1, -1),
+      health_outcomes = c(9.8, 10.2, 12.5),
+      population = c(1L, 1L, 1L),
+      pop = c(950L, 1000L, 1200L)
+    )
+  }
+
+  mock_aggregate_by_column <- function(df, column) {
+    expect_equal(column, "region")
+    df
+  }
+
+  local_mocked_bindings(
+    check_file_extension = mock_check_file_extension,
+    read_input_data = mock_read_input_data,
+    aggregate_by_column = mock_aggregate_by_column
+  )
+
+  expected <- data.frame(
+    date = as.Date(c("2023-01-01", "2023-01-02", "2023-01-03")),
+    region = c("Overall", "Overall", "Overall"),
+    temp = c(23.5, 25.1, 22.8),
+    suicides = c(10.2, 12.5, 9.8),
+    population = c(1000L, 1200L, 950L)
+  ) %>%
+    dplyr::mutate(
+      year = as.factor(lubridate::year(date)),
+      month = as.factor(lubridate::month(date)),
+      dow = as.factor(lubridate::wday(date, label = TRUE)),
+      region = as.factor(region),
+      stratum = as.factor(interaction(region, year, month, dow, drop = TRUE)),
+      ind = stats::ave(suicides, stratum, FUN = sum)
+    ) %>%
+    dplyr::arrange(date)
+
+  result <- mh_read_and_format_data(
+    "mock_file.csv",
+    "date_column",
+    NULL,
+    "tmean",
+    "health_outcomes",
+    "pop"
+  )
+
+  expect_equal(result, expected)
+})
+
 
 
 test_that("mh_create_crossbasis creates correct cross-basis matrices", {
@@ -1785,7 +1828,9 @@ test_that("mh_save_results writes all expected CSV files and validates content",
 
 # mental health integration test
 test_that("integration: suicides_heat_do_analysis runs end-to-end (dynamic synthetic data)", {
-  skip_if_integration_disabled()
+
+  if (!identical(Sys.getenv("NOT_CRAN"), "true")) skip("Skipping on CRAN")
+  if (Sys.getenv("RUN_INTEGRATION") != "true")    skip("Skipping CI integration")
 
   set.seed(42)
 
@@ -1866,4 +1911,91 @@ test_that("integration: suicides_heat_do_analysis runs end-to-end (dynamic synth
   expect_true(all(c("qaic_results", "qaic_summary", "vif_results") %in% names(result)))
   expect_s3_class(result$qaic_results, "data.frame")
   expect_true(nrow(result$qaic_results) > 0, info = "QAIC results unexpectedly empty")
+})
+
+test_that("integration: descriptive stats runs and outputs files", {
+
+  if (!identical(Sys.getenv("NOT_CRAN"), "true")) skip("Skipping on CRAN")
+  if (Sys.getenv("RUN_INTEGRATION") != "true")    skip("Skipping CI integration")
+
+  set.seed(42)
+
+  # synthetic data generation
+  n_days_per_region <- 500
+  regions <- c("Region 1", "Region 2")
+  start_date <- as.Date("2000-01-01")
+
+  make_region <- function(region_name) {
+    set.seed(126)
+    dates <- seq(start_date, by = "day", length.out = n_days_per_region)
+    day_ix <- seq_len(n_days_per_region)
+
+    tmean <- 10 + 8*sin(2*pi*day_ix/365) + rnorm(n_days_per_region, sd = 4)
+    tmean <- pmax(pmin(tmean, 25), -5)
+
+    hum <- pmax(pmin(80 + rnorm(n_days_per_region, sd = 6), 95), 70)
+    rainfall <- pmax(rnorm(n_days_per_region, 3.5, 2.0), 0)
+    sun <- pmax(rnorm(n_days_per_region, 2.5, 1.2), 0)
+
+    pop <- if (region_name == "Region 1") 2600000L else 6800000L
+
+    lambda <- exp(-0.1 + 0.03 * tmean)
+    suicides <- rpois(n_days_per_region, lambda)
+
+    data.frame(
+      date = dates,
+      region = region_name,
+      tmean = round(tmean, 2),
+      hum = round(hum, 2),
+      sun = round(sun, 2),
+      rainfall = round(rainfall, 2),
+      population = pop,
+      suicides = suicides
+    )
+  }
+
+  df <- do.call(rbind, lapply(regions, make_region))
+
+  tmp_file <- tempfile(fileext = ".csv")
+  write.csv(df, tmp_file, row.names = FALSE)
+  on.exit(unlink(tmp_file), add = TRUE)
+
+  # create temp output directory
+  out_dir <- tempdir()
+
+  result <- suppressWarnings(
+    suicides_heat_do_analysis(
+      data_path = tmp_file,
+      date_col = "date",
+      region_col = "region",
+      temperature_col = "tmean",
+      health_outcome_col = "suicides",
+      population_col = "population",
+      independent_cols = c("hum", "sun", "rainfall"),
+      save_fig = FALSE,
+      save_csv = FALSE,
+      run_descriptive = TRUE,
+      output_folder_path = out_dir,
+      var_per = c(50),
+      lag_days = 1
+    )
+  )
+
+  # find newly created analysis folder
+  created_dirs <- list.dirs(out_dir, recursive = FALSE)
+  expect_true(length(created_dirs) > 0, info = "No analysis directory created")
+
+  latest_dir <- created_dirs[which.max(file.info(created_dirs)$mtime)]
+
+  # check descriptive_stats subfolder exists
+  desc_dir <- file.path(latest_dir, "descriptive_stats")
+  expect_true(dir.exists(desc_dir), info = "descriptive_stats folder not created")
+
+  # check that at least one file was written
+  files <- list.files(desc_dir, recursive = TRUE)
+  expect_true(length(files) > 0, info = "No descriptive output files created")
+
+  # pipeline still returns expected structure
+  expect_type(result, "list")
+  expect_true("qaic_results" %in% names(result))
 })

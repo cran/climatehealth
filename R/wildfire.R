@@ -4,7 +4,8 @@
 #'
 #' @description Reads in a CSV file for a daily time series of health and climate data,
 #' renames columns to standard names. Creates columns for day of week, month,
-#' and year columns derived from the date.
+#' and year columns derived from the date, and sorts the result by region and
+#' date.
 #'
 #' @param health_path Path to a CSV file containing a daily time series of data
 #' for a particular health outcome and climate variables, which may be disaggregated by region.
@@ -94,7 +95,6 @@ read_and_format_data <- function(
   # Data set pre processing
   rename_args <- list(
     date = rlang::sym(date_col),
-    tmean = rlang::sym(mean_temperature_col),
     health_outcome = rlang::sym(health_outcome_col),
     region = rlang::sym(region_col),
     rh = rlang::sym(rh_col),
@@ -104,6 +104,9 @@ read_and_format_data <- function(
     rename_args$pop <- rlang::sym(population_col)
   }
   df <- df %>%
+    dplyr::mutate(
+      tmean = .data[[mean_temperature_col]]
+    ) %>%
     dplyr::rename(!!!rename_args) %>%
     dplyr::mutate(
       date = date_function(date),
@@ -111,7 +114,9 @@ read_and_format_data <- function(
       month = lubridate::month(date),
       day = lubridate::day(date),
       dow = as.character(lubridate::wday(date, label = TRUE))
-    )
+    ) %>%
+    #sort data by region and date
+    dplyr::arrange(.data$region, .data$date)
   return(df)
 }
 
@@ -255,6 +260,19 @@ join_health_and_climate_data <- function(
   return(df_joined)
 }
 
+#' Resolve input column name
+#'
+#' @description resolves and validates column reference supplied by the user against
+#' available columns in the input dataset
+#'
+#' @param column Character. Imput column name
+#' @param available Character. vector of available column names
+#' @param dataset_name Character. Name of data frame containing columns
+#' @param argument_name Character. Name of the input argument.
+#'
+#' @returns Character. Resolved column name
+#'
+#' @keywords internal
 resolve_input_column_name <- function(
     column,
     available,
@@ -395,7 +413,7 @@ load_wildfire_data <- function(
     )
     # Normalise column name
     health_df <- health_df %>%
-      dplyr::rename(mean_PM = all_of(pm_2_5_col))
+      dplyr::mutate(mean_PM = .data[[pm_2_5_col]])
     return(health_df)
   }
   # Obtain wildfire data
@@ -482,47 +500,6 @@ create_lagged_variables <- function(
   return(df_all)
 }
 
-#' Generate splines for temperature variable
-#'
-#' @description Generates temperature splines for each region
-#'
-#' @param data Dataframe containing a daily time series of climate and health
-#' data
-#' @param nlag Integer. The number of days of lag in the temperature
-#' variable from which to generate splines (unlagged temperature
-#' variable). Defaults to 0.
-#' @param degrees_freedom Integer. Degrees of freedom for the spline(s).
-#' Defaults to 6.
-#'
-#' @returns Dataframe with additional column for temperature spline.
-#'
-#' @keywords internal
-create_temperature_splines <- function(
-    data,
-    nlag = 0,
-    degrees_freedom = 6) {
-  # Validate inputs
-  if (degrees_freedom < 1) stop("Degrees of freedom must be >= 1.")
-  if (nlag < 0) stop("nlag must be >= 0.")
-  if (!("tmean" %in% colnames(data))) stop("tmean not found in dataset to create splines.")
-  lagcol <- paste0("tmean_l", nlag, "_mean")
-  if (!(lagcol %in% colnames(data))) stop(paste(lagcol, "not found in dataset."))
-  # Create splines
-  df_list <- split(data, f = data$region)
-  for (i in seq_along(df_list)) {
-    region_data <- df_list[[i]]
-    region_data$ns.tmean <- splines::ns(
-      x = region_data[[lagcol]],
-      df = degrees_freedom
-    )
-    df_list[[i]] <- region_data
-  }
-  # Combine region level data in to one dataframe
-  df_all <- do.call(rbind, df_list)
-  row.names(df_all) <- NULL
-  return(df_all)
-}
-
 #' Stratify data by time period
 #'
 #' @description Adds columns for strata for each region:year:month:dayofweek
@@ -546,7 +523,7 @@ time_stratify <- function(data) {
   }
   # Create stratified columns
   df <- split(data, f = data$region)
-  for (i in seq(df)) {
+  for (i in seq_along(df)) {
     # Convert column to factors
     df[[i]]$month <- as.factor(df[[i]]$month)
     df[[i]]$year <- as.factor(df[[i]]$year)
@@ -556,7 +533,7 @@ time_stratify <- function(data) {
     )
     df[[i]]$stratum <- with(
       df[[i]],
-      as.factor(reg_name_strata:year:month:dow)
+      interaction(reg_name_strata, year, month, dow, drop = TRUE)
     )
     df[[i]]$ind <- tapply(
       df[[i]]$health_outcome,
@@ -570,60 +547,6 @@ time_stratify <- function(data) {
   return(df_all)
 }
 
-#' Save descriptive statistics
-#'
-#' @description Generates summary statistics for climate and health data and
-#' saves them to the specified file path.
-#'
-#' @param data Dataframe containing a daily time series of climate and health
-#' data
-#' @param variables Character or character vector with variable to produce
-#' summary statistics for. Must include at least 1 variable.
-#' @param bin_width Integer. Width of each bin in a histogram of the outcome
-#' variable. Defaults to 5.
-#' @param output_dir Character. The directory to output descriptive stats to.
-#' Must exist and will not be automatically created. Defaults to ".".
-#'
-#' @returns Prints summary statistics and a histogram of the the outcome
-#' variable
-#'
-#' @keywords internal
-descriptive_stats <- function(
-    data,
-    variables,
-    bin_width = 5,
-    output_dir = ".") {
-  # validate and define file paths
-  if (!file.exists(output_dir)) stop("Output directory does not exist.")
-  hist_fpath <- file.path(output_dir, "health_outcome_hist.png")
-  summary_fpath <- file.path(output_dir, "variable_summaries.csv")
-  # create and save hist
-  png(filename = hist_fpath)
-  hist(
-    data$health_outcome,
-    breaks = seq(
-      0,
-      max(data$health_outcome, na.rm = TRUE) + bin_width,
-      by = bin_width
-    ),
-    main = "Health outcome",
-    xlab = "Health outcome"
-  )
-  dev.off()
-  # create summaries, combine and output
-  summary_list <- lapply(variables, function(var) {
-    stats <- summary(data[[var]])
-    data.frame(
-      variable = var,
-      statistic = names(stats),
-      value = as.vector(stats),
-      stringsAsFactors = FALSE
-    )
-  })
-  summary_df <- do.call(rbind, summary_list)
-  write.csv(summary_df, file = summary_fpath, row.names = FALSE)
-}
-
 #' Check variance inflation factors of predictor variables using a linear model
 #'
 #' @description Checks variance inflation factors of predictor variables using a
@@ -634,6 +557,11 @@ descriptive_stats <- function(
 #' data.
 #' @param predictors Character vector with each of the predictors to include
 #' in the model. Must contain at least 2 variables.
+#' @param calculate_by_region Bool. Whether to calculate Relative Risk
+#' by region. Defaults to FALSE.
+#' @param join_wildfire_data Boolean. If TRUE, a daily time series of
+#' wildfire-related PM2.5 concentration is joined to the health data. If FALSE,
+#' the data set is loaded without any additional joins.
 #' @param save_csv Bool. Whether or not to save the VIF results to a CSV.
 #' @param output_folder_path String. Where to save the CSV file to (if save_csv == TRUE).
 #' @param print_vif Bool, whether or not to print VIF for each predictor.
@@ -645,6 +573,8 @@ descriptive_stats <- function(
 check_wildfire_vif <- function(
     data,
     predictors,
+    calculate_by_region,
+    join_wildfire_data,
     save_csv = FALSE,
     output_folder_path = NULL,
     print_vif = FALSE) {
@@ -655,6 +585,15 @@ check_wildfire_vif <- function(
   if (!is.character(predictors) || !is.vector(predictors)) {
     stop("Please provide predictor variable names as a character vector")
   }
+  #ensure predictors is character
+  predictors <- as.character(predictors)
+  #add wildfire_PM when running join_wildfire_data = TRUE
+  if (join_wildfire_data) {
+    if ("mean_PM" %in% names(data) && !("mean_PM" %in% predictors)) {
+      predictors <- c(predictors, "mean_PM")
+    }
+  }
+
   if (length(predictors) < 2) {
     stop("Please provide at least two predictor variables")
   }
@@ -662,8 +601,19 @@ check_wildfire_vif <- function(
   formula <- paste("health_outcome ~", paste(predictors, collapse = "+"))
   # Loop regions
   vif_results <- list()
-  for (reg in unique(data$region)) {
-    region_data <- subset(data, data$region == reg)
+  groups_vif <- if (calculate_by_region) {
+    unique(data$region)
+  } else {
+    "All Regions"
+  }
+
+  for (reg in groups_vif) {
+    if (calculate_by_region) {
+      region_data <- subset(data, data$region == reg)
+    } else {
+      region_data <- data
+    }
+
     model <- glm(formula,
                  data = region_data,
                  family = stats::poisson(link = "log"))
@@ -679,8 +629,9 @@ check_wildfire_vif <- function(
       vif_results[[reg]] <- data.frame(
         region = reg,
         formula = formula,
-        var = var,
-        VIF = vif_mod
+        var = names(vif_mod),
+        VIF = as.numeric(vif_mod),
+        row.names = NULL
       )
     }
   }
@@ -699,6 +650,16 @@ check_wildfire_vif <- function(
   }
 }
 
+#' Get wildfire lag columns
+#'
+#' @description Finds wildfire PM2.5 lag columns in a dataframe
+#'
+#' @param data Dataframe containing a daily time series of climate and health
+#' data with wildfire PM2.5 data
+#'
+#' @returns List containing wildfire lag column names and lag numbers
+#'
+#' @keywords internal
 get_wildfire_lag_columns <- function(data) {
   lags <- c("mean_PM")
   lag_nums <- c("mean_PM" = 0)
@@ -729,6 +690,12 @@ get_wildfire_lag_columns <- function(data) {
 #' estimates and relative risks (e.g. scale_factor = 10 corresponds to estimates
 #' and relative risks representing impacts of a 10 unit increase in wildfire
 #' PM2.5). Setting this parameter to 0 or 1 leaves the variable unscaled.
+#' @param temperature_lag Integer. The number of days for which to calculate
+#' the lags for temperature. Default is 1.
+#' @param spline_temperature_degrees_freedom Integer. Degrees of freedom for the
+#' spline(s).
+#' @param calculate_by_region Bool. Whether to calculate Relative Risk
+#' by region. Defaults to FALSE.
 #' @param save_fig Bool. Whether or not to save a figure showing residuals vs
 #' fitted values for each lag. Defaults to FALSE.
 #' @param output_folder_path String. Where to save the figure. Defaults to NULL.
@@ -742,7 +709,9 @@ get_wildfire_lag_columns <- function(data) {
 casecrossover_quasipoisson <- function(
     data,
     scale_factor_wildfire_pm = 10,
-    wildfire_lag,
+    temperature_lag,
+    spline_temperature_degrees_freedom,
+    calculate_by_region,
     save_fig = TRUE,
     output_folder_path = NULL,
     print_model_summaries = TRUE) {
@@ -761,21 +730,69 @@ casecrossover_quasipoisson <- function(
   lag_cols <- get_wildfire_lag_columns(data = data)
   lags <- lag_cols$col_names
   lag_nums <- lag_cols$lag_nums
+
+  # format panel labels for residual diagnostic plots
+  format_wildfire_lag_panel_label <- function(x) {
+    if (identical(x, "mean_PM")) {
+      return("mean_pm")
+    }
+
+    if (grepl("^mean_PM_l\\d+_mean$", x)) {
+      lag_num <- sub("^mean_PM_l(\\d+)_mean$", "\\1", x)
+      return(paste0("mean_pm_l0_", lag_num))
+    }
+
+    tolower(x)
+  }
+
+  # choose lagged temperature variables
+  temp_var <- if(temperature_lag == 0) {
+    "tmean"
+  } else{
+    paste0("tmean_l", temperature_lag, "_mean")
+  }
+
+  if(!temp_var %in% colnames(data)) {
+    stop(paste(temp_var, "not found in data. Check is create_lagged_variable was run first"))
+  }
+
   # get results
   results <- list()
+
   if (save_fig == TRUE) {
-    grid <- create_grid(length(lags))
+    cols <- get_accessible_palette()
+
+    file_name <- if (calculate_by_region && "region" %in% names(data)) {
+      paste0(
+        "wildfires_residuals_vs_fit_plot_",
+        gsub(" ", "_", unique(as.character(data$region))[1]), ".pdf"
+      )
+    } else {
+      "wildfires_residuals_vs_fit_plot.pdf"
+    }
+
     output_path <- file.path(
       output_folder_path,
       "model_validation",
-      "wildfires_residuals_vs_fit_plot.pdf"
+      file_name
     )
-    pdf(output_path, width = grid[1] * 4, height = grid[2] * 4)
-    par(mfrow = c(grid[1], grid[2]))
+
+    open_accessible_pdf(
+      file = output_path,
+      n_plots = length(lags),
+      max_cols = 2,
+      panel_width = 5.8,
+      panel_height = 4.8,
+      mar = c(5.0, 5.0, 3.2, 2.0),
+      oma = c(6.2, 0.6, 6.8, 0.6)
+    )
   }
+
   for (i in lags) {
     # create model
-    formula_parts <- c("health_outcome ~ splines::ns(tmean, df = 6)")
+    formula_parts <- c(
+      paste0("health_outcome ~ splines::ns(",temp_var,", df = ", spline_temperature_degrees_freedom, ")")
+    )
     if (!all(is.na(data$rh))) {
       formula_parts <- c(formula_parts, "splines::ns(rh, df = 3)")
     }
@@ -785,7 +802,6 @@ casecrossover_quasipoisson <- function(
 
     formula_parts <- c(formula_parts, i)
 
-
     formula <- as.formula(paste(formula_parts, collapse = " + "))
     model <- gnm::gnm(
       formula,
@@ -794,6 +810,7 @@ casecrossover_quasipoisson <- function(
       subset = data$ind > 0,
       eliminate = data$stratum
     )
+
     # print summaries if required
     if (print_model_summaries) {
       print(Epi::ci.exp(model, subset = i))
@@ -805,11 +822,54 @@ casecrossover_quasipoisson <- function(
         model$deviance / model$df.residual
       ))
     }
+
     # get residuals and plot (if needed)
     devresid <- resid(model, type = "deviance")
+    used_rows <- data$ind > 0 & stats::complete.cases(data[, all.vars(formula), drop = FALSE])
+    fit_data <- data[used_rows, , drop = FALSE]
+    fitted_vals <- model$fitted.values
+
     if (save_fig == TRUE) {
-      plot(devresid ~ model$fitted.values, main = i, col = "#f25574")
+      if (calculate_by_region) {
+        for (reg in unique(fit_data$region)) {
+          idx <- fit_data$region == reg
+          x <- fitted_vals[idx]
+          y <- devresid[idx]
+          if (length(x) == 0 || length(y) == 0 || all(is.na(x)) || all(is.na(y))) next
+
+          plot(
+            x, y,
+            xlab = "Fitted values",
+            ylab = "Deviance residuals",
+            main = format_wildfire_lag_panel_label(i),
+            col = cols$deep_water,
+            pch = 16,
+            cex = 0.85,
+            col.axis = cols$axis,
+            col.lab = cols$text,
+            col.main = cols$text
+          )
+        }
+      } else {
+        x <- fitted_vals
+        y <- devresid
+        if (length(x) > 0 && length(y) > 0 && !all(is.na(x)) && !all(is.na(y))) {
+          plot(
+            x, y,
+            xlab = "Fitted values",
+            ylab = "Deviance residuals",
+            main = format_wildfire_lag_panel_label(i),
+            col = cols$deep_water,
+            pch = 16,
+            cex = 0.85,
+            col.axis = cols$axis,
+            col.lab = cols$text,
+            col.main = cols$text
+          )
+        }
+      }
     }
+
     coef_pm <- summary(model)$coefficients[i, "Estimate"]
     se_pm <- summary(model)$coefficients[i, "Std. Error"]
 
@@ -824,15 +884,46 @@ casecrossover_quasipoisson <- function(
       ci_upper = ci_upper
     )
   }
+
   # save figure
   if (save_fig == TRUE) {
-    dev.off()
+    diagnostic_region <- if (calculate_by_region && "region" %in% names(data)) {
+      unique(as.character(data$region))[1]
+    } else {
+      "All Regions"
+    }
+
+    alt_text <- paste(
+      "Diagnostic residuals versus fitted values plots for wildfire-related PM2.5 models.",
+      "Each panel corresponds to one wildfire PM2.5 lag term.",
+      "The x-axis shows fitted values from the quasi-Poisson case-crossover model.",
+      "The y-axis shows deviance residuals.",
+      "The plots are used to assess model fit and identify unusual residual patterns.",
+      "The figure is shown for", diagnostic_region, "."
+    )
+
+    run_accessible_pdf_plot(
+      title = "Wildfire model diagnostics: residuals versus fitted values",
+      subtitle = paste("Region:", diagnostic_region),
+      line_title = 4.6,
+      line_subtitle = 3.0
+    )
+
+    add_accessible_alt_text(
+      alt_text = alt_text,
+      width = 155,
+      line_start = 0.8
+    )
+
+    grDevices::dev.off()
   }
+
   # create results df and return
   results <- unique(as.data.frame(do.call(rbind, results)))
   rownames(results) <- NULL
   return(results)
 }
+
 
 #' QAIC calculation
 #'
@@ -841,6 +932,12 @@ casecrossover_quasipoisson <- function(
 #'
 #' @param data Dataframe containing a daily time series of climate and health
 #' data from which to fit models.
+#' @param temperature_lag Integer. The number of days for which to calculate
+#' the lags for temperature. Default is 1.
+#' @param spline_temperature_degrees_freedom Integer. Degrees of freedom for the
+#' spline(s).
+#' @param calculate_by_region Bool. Whether to calculate Relative Risk
+#' by region. Defaults to FALSE.
 #' @param save_csv Bool. Whether or not to save the VIF results to a CSV.
 #' @param output_folder_path String. Where to save the CSV file to (if save_csv == TRUE).
 #' @param print_results Logical. Whether or not to print model summaries and
@@ -851,6 +948,9 @@ casecrossover_quasipoisson <- function(
 #' @keywords internal
 calculate_qaic <- function(
     data,
+    temperature_lag,
+    spline_temperature_degrees_freedom,
+    calculate_by_region,
     save_csv = FALSE,
     output_folder_path = NULL,
     print_results = FALSE) {
@@ -865,19 +965,39 @@ calculate_qaic <- function(
   lag_nums <- lag_cols$lag_nums
   # create results holder and loop regions
   all_results <- list()
-  for (reg in unique(data$region)) {
-    region_data <- subset(data, data$region == reg)
-    for (i in lags) {
+  groups <- if(calculate_by_region) unique(data$region) else "all_data"
+  for (reg in groups) {
+    qaic_results <- list()
+    region_data <- if(calculate_by_region) {
+      subset(data, data$region == reg)
+    } else {
+      data
+    }
+    for (i in seq_along(lags)) {
       # define model
       number <- lag_nums[[i]]
+      #choose lagged temperature variables
+      temp_var <- if(temperature_lag == 0) {
+        "tmean"
+      } else {
+        paste0("tmean_l", temperature_lag, "_mean")
+      }
+
+      if(!temp_var %in% colnames(region_data)) {
+        stop(paste(temp_var, "not found in data. Check is create_lagged_variable was run first"))
+      }
       # create model formula
-      formula_parts <- c("health_outcome ~ splines::ns(tmean, df = 6)", i)
-      if (!all(is.na(data$rh))) {
+      formula_parts <- c(
+        paste0("health_outcome ~ splines::ns(",temp_var,", df = ", spline_temperature_degrees_freedom, ")")
+      )
+
+      if ("rh" %in% names(region_data) && !all(is.na(region_data$rh))) {
         formula_parts <- c(formula_parts, "splines::ns(rh, df = 3)")
       }
-      if (!all(is.na(data$wind_speed))) {
+      if ("wind_speed" %in% names(region_data) && !all(is.na(region_data$wind_speed))) {
         formula_parts <- c(formula_parts, "splines::ns(wind_speed, df = 3)")
       }
+      formula_parts <- c(formula_parts, lags[[i]])
       formula <- as.formula(paste(formula_parts, collapse = " + "))
       model <- gnm::gnm(formula,
                         data = region_data,
@@ -899,6 +1019,7 @@ calculate_qaic <- function(
         print(paste("QAIC for", i, "=", qaic))
         print(paste("Pearson dispersion statistic:", round(dispersion, 3)))
       }
+
       qaic_results[[paste0("qaic_at_lag_", lag_nums[[i]])]] <- qaic
       qaic_results[[paste0("pearson_dispersion_at_lag_", lag_nums[[i]])]] <- round(dispersion, 3)
     }
@@ -952,6 +1073,9 @@ plot_RR <- function(
   if (save_fig && is.null(output_folder_path)) {
     stop("No output path provided when save_fig == TRUE.")
   }
+
+  cols <- get_accessible_plot_colours()
+
   # create list to collect plots
   plots <- list()
   # determine ylimits for plotting
@@ -986,15 +1110,40 @@ plot_RR <- function(
     )
     plots[[length(plots) + 1]] <- plot
   }
+
+  alt_text <- paste(
+    "Relative risk plot for wildfire-related PM2.5 by lag.",
+    "Each point shows the estimated relative risk and each vertical error bar shows the 95 percent confidence interval.",
+    "The dashed horizontal line marks relative risk equal to one.",
+    if (by_region) {
+      "Panels show estimates separately by region."
+    } else {
+      "The plot shows the estimate for all regions combined."
+    }
+  )
+
   # combine and save
-  combined_plots <- patchwork::wrap_plots(plots)
+  n_panels <- length(plots)
+  n_cols <- min(2, n_panels)
+  n_rows <- ceiling(n_panels / n_cols)
+  combined_plots <- patchwork::wrap_plots(plots, ncol = n_cols)
+
+  combined_plots <- combined_plots +
+    accessible_plot_annotation(
+      title = "Wildfire PM2.5 Relative Risk by Lag",
+      subtitle = "Points show relative risk estimates. Error bars show 95% confidence intervals.",
+      alt_text = alt_text,
+      width = if (n_panels == 1) 115 else 170
+    )
+
   if (save_fig) {
-    ggplot2::ggsave(
-      filename = file.path(output_folder_path, "RR_lag_estimates.pdf"),
-      plot = combined_plots,
-      width = if (length(combined_plots) == 1) 8 else 5 * length(combined_plots),
-      height = if (length(combined_plots) == 1) 8 else 4 * length(combined_plots),
-      limitsize = FALSE
+    save_accessible_ggplot(
+      plot_object = combined_plots,
+      output_dir = output_folder_path,
+      filename = "RR_lag_estimates",
+      width = if (n_panels == 1) 8.4 else max(9, n_cols * 5.8),
+      height = if (n_panels == 1) 9.2 else max(6, n_rows * 5.2),
+      alt_text = alt_text
     )
   }
   return(combined_plots)
@@ -1031,6 +1180,7 @@ plot_RR_core <- function(
   if (save_fig && is.null(output_folder_path)) {
     stop("No output path provided when save_fig == TRUE.")
   }
+  cols <- get_accessible_plot_colours()
   # generate labels
   labels <- c("0 days")
   if (wildfire_lag > 0) {
@@ -1047,6 +1197,15 @@ plot_RR_core <- function(
       max(rr_data$ci_upper) + 0.1
     )
   }
+
+  alt_text <- paste(
+    "Relative risk plot for wildfire-related PM2.5 in",
+    region_name,
+    ". Points show relative risk estimates by lag.",
+    "Vertical error bars show 95 percent confidence intervals.",
+    "The dashed horizontal line marks relative risk equal to one."
+  )
+
   # plot RR data
   plot <- ggplot2::ggplot(
     data = rr_data,
@@ -1057,35 +1216,37 @@ plot_RR_core <- function(
       ymax = .data$ci_upper
     )
   ) +
-    ggplot2::geom_point(size = 3) +
-    ggplot2::geom_errorbar(width = 0.5, linewidth = 1) +
-    ggplot2::geom_hline(yintercept = 1, lty = 2) +
+    ggplot2::geom_point(size = 3, colour = cols$primary) +
+    ggplot2::geom_errorbar(width = 0.5, linewidth = 1, colour = cols$primary) +
+    ggplot2::geom_hline(yintercept = 1, lty = 2, colour = cols$reference, linewidth = 0.7) +
     ggplot2::xlab("Lag") +
     ggplot2::ylab("Relative risk") +
-    ggplot2::ggtitle(paste("Wildfire PM2.5: ", region_name, sep = "")) +
-    ggplot2::scale_x_continuous(
-      breaks = seq(0, wildfire_lag, 1), labels = labels
-    ) +
-    ggplot2::scale_y_continuous(
-      limits = ylims
-    ) +
-    ggplot2::theme_bw() +
-    ggplot2::theme(
-      axis.text = ggplot2::element_text(size = 18),
-      axis.title = ggplot2::element_text(size = 18)
+    ggplot2::ggtitle(paste(region_name)) +
+    ggplot2::scale_x_continuous(breaks = seq(0, wildfire_lag, 1), labels = labels) +
+    ggplot2::scale_y_continuous(limits = ylims) +
+    theme_accessible_ggplot() +
+    theme_accessible_ggplot_panel() +
+    ggplot2::theme(legend.position = "none",plot.title = ggplot2::element_text(hjust = 0.5)
     )
+
+  plot <- add_ggplot_alt_caption(
+    plot_object = plot,
+    alt_text = alt_text
+  )
+
   # save figure if necessary
   if (save_fig == TRUE) {
     # Create output path and PDF
     formatted_region_name <- gsub(" ", "_", tolower(region_name))
-    file_name <- paste(
-      "RR_lag_estimates_", formatted_region_name, ".pdf",
-      sep = ""
+    file_name <- paste("RR_lag_estimates_", formatted_region_name, sep = "")
+    save_accessible_ggplot(
+      plot_object = plot,
+      output_dir = output_folder_path,
+      filename = file_name,
+      width = 8,
+      height = 8,
+      alt_text = alt_text
     )
-    pdf(file.path(output_folder_path, file_name), width = 8, height = 8)
-    # Add to figure
-    print(plot)
-    dev.off()
   }
   return(plot)
 }
@@ -1098,8 +1259,10 @@ plot_RR_core <- function(
 #'
 #' @param rr_results Dataframe of relative risk and confidence intervals for
 #' each lag of wildfire-related PM2.5.
-#' @param an_ar_results Dataframe containing attributable number/fraction
+#' @param an_ar_results Dataframe containing attributable number and fraction
 #' results. Defaults to NULL.
+#' @param annual_af_an_results A dataframe containing annual attributable numbers
+#' and fractions for each region
 #' @param output_folder_path Path to folder where results should be saved.
 #'
 #' @keywords internal
@@ -1121,12 +1284,12 @@ save_wildfire_results <- function(
   if (!is.null(an_ar_results)) {
     write.csv(
       an_ar_results,
-      file = file.path(output_folder_path, "wildfire_health_monthly_estimates.csv"),
+      file = file.path(output_folder_path, "wildfire_mortality_monthly_estimates.csv"),
       row.names = FALSE
     )
     write.csv(
       annual_af_an_results,
-      file = file.path(output_folder_path, "wildfire_health_yearly_estimates.csv"),
+      file = file.path(output_folder_path, "wildfire_mortality_yearly_estimates.csv"),
       row.names = FALSE
     )
   }
@@ -1140,13 +1303,17 @@ save_wildfire_results <- function(
 #'
 #' @param data Dataframe containing a daily time series of climate and health
 #' data from which to fit models.
+#' @param temperature_lag Integer. The number of days for which to calculate
+#' the lags for temperature. Default is 1.
+#' @param spline_temperature_degrees_freedom Integer. Degrees of freedom for the
+#' spline(s).
 #' @param scale_factor_wildfire_pm Numeric. The value to divide the wildfire
 #' PM2.5 concentration variables by for alternative interpretation of outputs.
 #' Corresponds to the unit increase in wildfire PM2.5 to give the model
 #' estimates and relative risks (e.g. scale_factor = 10 corresponds to estimates
 #' and relative risks representing impacts of a 10 unit increase in wildfire
 #' PM2.5). Setting this parameter to 0 or 1 leaves the variable unscaled.
-#' @param calc_relative_risk_by_region Bool. Whether to calculate Relative Risk
+#' @param calculate_by_region Bool. Whether to calculate Relative Risk
 #' by region. Defaults to FALSE.
 #' @param save_fig Bool. Whether or not to save a figure showing residuals vs
 #' fitted values for each lag. Defaults to FALSE.
@@ -1155,14 +1322,16 @@ save_wildfire_results <- function(
 #' console. Defaults to FALSE.
 #'
 #' @returns Dataframe of relative risk and confidence intervals for
-#' each lag of wildfire-related PM2.5. Split by region if calc_relative_risk_by_region
+#' each lag of wildfire-related PM2.5. Split by region if calculate_by_region
 #' set to TRUE.
 #'
 #' @keywords internal
 calculate_wildfire_rr_by_region <- function(
     data,
+    temperature_lag,
+    spline_temperature_degrees_freedom,
     scale_factor_wildfire_pm,
-    calc_relative_risk_by_region = FALSE,
+    calculate_by_region = FALSE,
     save_fig = FALSE,
     output_folder_path = NULL,
     print_model_summaries = FALSE) {
@@ -1170,38 +1339,32 @@ calculate_wildfire_rr_by_region <- function(
   if (save_fig && is.null(output_folder_path)) {
     stop("No output path provided when save_fig == TRUE.")
   }
-  if (calc_relative_risk_by_region == TRUE && !("region" %in% names(data))) {
+  if (calculate_by_region == TRUE && !("region" %in% names(data))) {
     stop("data must contain 'region' column for region level RR data.")
   }
   results_list <- list()
-  if (calc_relative_risk_by_region == TRUE) {
-    # split dataset and create output list
-    df_list <- split(data, f = data$region)
-    # Get region level RR data
-    for (i in seq(df_list)) {
-      region_data <- df_list[[i]]
-      region_name <- names(df_list)[i]
-      region_results <- casecrossover_quasipoisson(
-        data = region_data,
-        scale_factor_wildfire_pm = scale_factor_wildfire_pm,
-        output_folder_path = output_folder_path,
-        save_fig = save_fig,
-        print_model_summaries = print_model_summaries
-      )
-      region_results$region_name <- region_name
-      results_list[[i]] <- region_results
-    }
+  df_list <- if (calculate_by_region) {
+    split(data, f = data$region)
+  } else {
+    list("All Regions" = data)
   }
-  # calculate and return dataset level RR
-  results <- casecrossover_quasipoisson(
-    data = data,
-    scale_factor_wildfire_pm = scale_factor_wildfire_pm,
-    output_folder_path = output_folder_path,
-    save_fig = save_fig,
-    print_model_summaries = print_model_summaries
-  )
-  results$region_name <- "All Regions"
-  results_list[[length(results_list) + 1]] <- results
+  # Get RR data
+  for (i in seq(df_list)) {
+    region_data <- df_list[[i]]
+    region_name <- names(df_list)[i]
+    region_results <- casecrossover_quasipoisson(
+      data = region_data,
+      temperature_lag = temperature_lag,
+      spline_temperature_degrees_freedom = spline_temperature_degrees_freedom,
+      calculate_by_region = calculate_by_region,
+      scale_factor_wildfire_pm = scale_factor_wildfire_pm,
+      output_folder_path = output_folder_path,
+      save_fig = save_fig,
+      print_model_summaries = print_model_summaries
+    )
+    region_results$region_name <- region_name
+    results_list[[i]] <- region_results
+  }
   # combine all regions and return
   results_all <- do.call(rbind, results_list)
   row.names(results_all) <- NULL
@@ -1218,6 +1381,14 @@ calculate_wildfire_rr_by_region <- function(
 #'
 #' @param data Dataframe containing a daily time series of climate and health
 #' data that was used to obtain rr_data.
+#' @param calculate_by_region Bool. Whether to calculate Relative Risk
+#' by region. Defaults to FALSE.
+#' @param scale_factor_wildfire_pm Numeric. The value to divide the wildfire
+#' PM2.5 concentration variables by for alternative interpretation of outputs.
+#' Corresponds to the unit increase in wildfire PM2.5 to give the model
+#' estimates and relative risks (e.g. scale_factor = 10 corresponds to estimates
+#' and relative risks representing impacts of a 10 unit increase in wildfire
+#' PM2.5). Setting this parameter to 0 or 1 leaves the variable unscaled.
 #' @param rr_data Dataframe containing relative risk and confidence intervals,
 #' calculated from input data.
 #'
@@ -1225,41 +1396,48 @@ calculate_wildfire_rr_by_region <- function(
 #' upper and lower confidence intervals.
 #'
 #' @keywords internal
-calculate_daily_AF_AN <- function(data, rr_data) {
+calculate_daily_AF_AN <- function(data,calculate_by_region, scale_factor_wildfire_pm, rr_data) {
   # dissagregate data into region level
-  df_list <- split(data, f = data$region)
+  df_list <- if (calculate_by_region) {
+    split(data, f = data$region)
+  } else {
+    list("All Regions" = data)
+  }
   # calculate values for each region
-  for (i in seq(df_list)) {
+  for (i in seq_along(df_list)) {
     region_data <- df_list[[i]]
     region_name <- names(df_list)[i]
+    rr_region_name <- if (calculate_by_region) region_name else "All Regions"
+    region_data$region_original <- region_data$region
+    region_data$region <- rr_region_name
     # obtain RR values inc. CIs
     RR_value <- rr_data %>%
-      filter(.data$lag == 0, .data$region_name == !!region_name) %>%
+      filter(.data$lag == 0, .data$region_name == !!rr_region_name) %>%
       pull(.data$relative_risk)
     RR_CI_lower <- rr_data %>%
-      filter(.data$lag == 0, .data$region_name == !!region_name) %>%
+      filter(.data$lag == 0, .data$region_name == !!rr_region_name) %>%
       pull(.data$ci_lower)
 
     RR_CI_upper <- rr_data %>%
-      filter(.data$lag == 0, .data$region_name == !!region_name) %>%
+      filter(.data$lag == 0, .data$region_name == !!rr_region_name) %>%
       pull(.data$ci_upper)
     # Calculate daily rescaled_RR, AF and AN
     region_data <- region_data %>%
       mutate(
-        rescaled_RR = exp((log(RR_value) / 10) * .data$mean_PM),
+        rescaled_RR = exp((log(RR_value) / scale_factor_wildfire_pm) * .data$mean_PM),
         attributable_fraction = (.data$rescaled_RR - 1) / .data$rescaled_RR,
         attributable_number = .data$attributable_fraction * .data$health_outcome
       )
     # Repeat for upper/lower CIs
     region_data <- region_data %>%
       mutate(
-        rescaled_CI_upper = exp((log(RR_CI_upper) / 10) * .data$mean_PM),
+        rescaled_CI_upper = exp((log(RR_CI_upper) / scale_factor_wildfire_pm) * .data$mean_PM),
         attributable_fraction_upper = (.data$rescaled_CI_upper - 1) / .data$rescaled_CI_upper,
         attributable_number_upper = .data$attributable_fraction_upper * .data$health_outcome
       )
     region_data <- region_data %>%
       mutate(
-        rescaled_CI_lower = exp((log(RR_CI_lower) / 10) * .data$mean_PM),
+        rescaled_CI_lower = exp((log(RR_CI_lower) / scale_factor_wildfire_pm) * .data$mean_PM),
         attributable_fraction_lower = (.data$rescaled_CI_lower - 1) / .data$rescaled_CI_lower,
         attributable_number_lower = .data$attributable_fraction_lower * .data$health_outcome
       )
@@ -1285,6 +1463,9 @@ calculate_daily_AF_AN <- function(data, rr_data) {
 #'
 #' @keywords internal
 summarise_AF_AN <- function(data, monthly = TRUE) {
+  sum_unique_region_pop <- function(pop, region_original) {
+    sum(pop[!duplicated(region_original)], na.rm = TRUE)
+  }
   # determine group columns
   group_cols <- c("region", "year")
   if (monthly) group_cols <- c(group_cols, "month")
@@ -1305,7 +1486,7 @@ summarise_AF_AN <- function(data, monthly = TRUE) {
   summary <- data %>%
     group_by(across(all_of(group_cols))) %>%
     summarise(
-      population = mean(.data$pop, na.rm = TRUE),
+      population = sum_unique_region_pop(.data$pop, .data$region_original),
       total_attributable_number = sum(.data$attributable_number, na.rm = TRUE),
       total_variance_AN = sum(.data$var_AN, na.rm = TRUE),
       average_attributable_fraction = mean(.data$attributable_fraction, na.rm = TRUE),
@@ -1349,6 +1530,7 @@ summarise_AF_AN <- function(data, monthly = TRUE) {
 #' by_region is TRUE, must also include region.
 #' @param by_region Logical. If TRUE, plots are generated per region using
 #' region. Defaults to FALSE.
+#' @param include_all_regions Logical. If TRUE includes All regions plots in output dir
 #' @param output_dir Character. Directory path where the PDF file will be
 #' saved. Must exist. Defaults to ".".
 #'
@@ -1356,7 +1538,7 @@ summarise_AF_AN <- function(data, monthly = TRUE) {
 #'
 #' @keywords internal
 #'
-plot_aggregated_AF <- function(data, by_region = FALSE, output_dir = ".") {
+plot_aggregated_AF <- function(data, by_region = FALSE, include_all_regions = TRUE, output_dir = ".") {
   # input validation
   expected_cols <- c(
     "year",
@@ -1386,17 +1568,18 @@ plot_aggregated_AF <- function(data, by_region = FALSE, output_dir = ".") {
   # set up plot
   pname <- "aggregated_AF"
   if (by_region) pname <- paste0(pname, "_by_region")
-  fpath <- file.path(output_dir, paste0(pname, ".pdf"))
   plots <- list()
   # plot for full dataset
-  p_all <- plot_aggregated_AF_core(
-    data = data_pct,
-    region_name = "All Regions"
-  )
-  # ensure y-axis is labeled as percent
-  p_all <- p_all + ggplot2::labs(y = "Attributable Fraction (%)")
-  plots[[1]] <- p_all
+  if (include_all_regions) {
+    p_all <- plot_aggregated_AF_core(
+      data = data_pct,
+      region_name = "All Regions"
+    )
+    # ensure y-axis is labeled as percent
+    p_all <- p_all + ggplot2::labs(y = "Attributable Fraction (%)")
+    plots[[length(plots) + 1]] <- p_all
 
+  }
 
   # plot for regions (conditional)
   if (by_region == TRUE) {
@@ -1410,19 +1593,59 @@ plot_aggregated_AF <- function(data, by_region = FALSE, output_dir = ".") {
       plots[[length(plots) + 1]] <- p_reg
     }
   }
+
+  alt_text <- paste(
+    "Annual attributable fraction plot for wildfire-related PM2.5 exposure.",
+    "Each panel shows the average attributable fraction over time.",
+    "The line shows the annual estimate and the shaded band shows the 95 percent confidence interval.",
+    if (by_region) {
+      "Panels show estimates separately by region."
+    } else {
+      "The plot shows the estimate for all regions combined."
+    },
+    "Note: Attributable fractions are based on relative risks at lag 0."
+  )
+
   # combine and save plots
-  combined_plots <- patchwork::wrap_plots(plots)
+  n_panels <- length(plots)
+  n_cols <- min(2, n_panels)
+  n_rows <- ceiling(n_panels / n_cols)
+
+  combined_plots <- patchwork::wrap_plots(plots, ncol = n_cols)
   # add caption
+  cols <- get_accessible_plot_colours()
+  note_text <- "Note: Please refer to section 4 of wildfire methods documentation for interpretation guidelines."
+
   combined_plots <- combined_plots +
     patchwork::plot_annotation(
-      caption = "Note: Attributable fraction(s) are based on relative risk(s) at lag 0."
+      title = "Annual Attributable Fraction due to Wildfire-related PM2.5 exposure",
+      subtitle = "Line shows annual estimate. Shaded area shows 95% confidence interval.",
+      caption = paste(
+        c(
+          strwrap(note_text, width = if (n_panels == 1) 115 else 170),"","",
+          strwrap(paste0("Alt text: ", alt_text), width = if (n_panels == 1) 115 else 170)
+        ),
+        collapse = "\n"
+      ),
+      theme = ggplot2::theme(
+        plot.title = ggplot2::element_text(
+          hjust = 0.5, face = "bold", size = 17, colour = cols$text, lineheight = 1.08,
+          margin = ggplot2::margin(t = 0, r = 0, b = 4, l = 0)),
+        plot.subtitle = ggplot2::element_text(
+          hjust = 0.5, size = 13, colour = cols$axis, lineheight = 1.15,
+          margin = ggplot2::margin(t = 0, r = 0, b = 10, l = 0)),
+        plot.caption = ggplot2::element_text(
+          hjust = 0, size = 11, colour = cols$text, face = "italic", lineheight = 1.12,
+          margin = ggplot2::margin(t = 2, r = 0, b = 0, l = 0))
+      )
     )
-  ggplot2::ggsave(
-    fpath,
-    combined_plots,
-    width = length(plots) * 5,
-    height = length(plots) * 4,
-    limitsize = FALSE
+  save_accessible_ggplot(
+    plot_object = combined_plots,
+    output_dir = output_dir,
+    filename = pname,
+    width = if (n_panels == 1) 8.4 else max(9, n_cols * 5.8),
+    height = if (n_panels == 1) 9.2 else max(6, n_rows * 5.2),
+    alt_text = alt_text
   )
 }
 
@@ -1441,6 +1664,7 @@ plot_aggregated_AF <- function(data, by_region = FALSE, output_dir = ".") {
 #' @keywords internal
 #'
 plot_aggregated_AF_core <- function(data, region_name = NULL) {
+  cols <- get_accessible_plot_colours()
   # aggregate AN/AR data
   agg_data <- data %>%
     group_by(.data$year) %>%
@@ -1451,9 +1675,6 @@ plot_aggregated_AF_core <- function(data, region_name = NULL) {
     ) %>%
     mutate(year = as.numeric(as.character(.data$year)))
   # create output plot
-  title <- "Annual Attributable Fraction (%) due to Wildfire-related PM2.5 exposure"
-  if (!is.null(region_name)) title <- paste0(title, " (", region_name, ")")
-  title_wrapped <- stringr::str_wrap(title, width = 45)
   plot_agg_an <- ggplot2::ggplot(
     agg_data,
     ggplot2::aes(x = .data$year, y = .data$sum_total_deaths)
@@ -1466,13 +1687,15 @@ plot_aggregated_AF_core <- function(data, region_name = NULL) {
     ggplot2::geom_line(color = "#003c57", linewidth = 1) +
     ggplot2::theme_minimal(base_size = 14) +
     ggplot2::labs(
-      title = title_wrapped,
+      title = region_name,
       x = "Year",
       y = "Attributable Fraction (%)"
     ) +
+    theme_accessible_ggplot() +
+    theme_accessible_ggplot_panel() +
     ggplot2::theme(
-      axis.line = ggplot2::element_line(linewidth = 0.5, colour = "black")
-    )
+      plot.title = ggplot2::element_text(hjust = 0.5), legend.position = "none")
+
   return(plot_agg_an)
 }
 
@@ -1509,12 +1732,18 @@ join_ar_and_pm_monthly <- function(
       paste(exp_cols_pm, collapse = ", ")
     ))
   }
-  monthly_pm25 <- pm_data %>%
-    group_by(.data$region, .data$year, .data$month) %>%
-    summarise(
-      monthly_avg_pm25 = mean(.data$mean_PM, na.rm = TRUE),
-      .groups = "drop"
-    )
+  monthly_pm25 <- if (identical(unique(an_ar_data$region), "All Regions")) {
+    pm_data %>%
+      group_by(.data$year, .data$month) %>%
+      summarise(monthly_avg_pm25 = mean(.data$mean_PM, na.rm = TRUE),
+                .groups = "drop") %>%
+      mutate(region = "All Regions")
+  } else {
+    pm_data %>%
+      group_by(.data$region, .data$year, .data$month) %>%
+      summarise(monthly_avg_pm25 = mean(.data$mean_PM, na.rm = TRUE),
+                .groups = "drop")
+  }
   joined_data <- left_join(
     an_ar_data,
     monthly_pm25,
@@ -1534,12 +1763,13 @@ join_ar_and_pm_monthly <- function(
 #' aggregated data as CSV. Defaults to FALSE.
 #' @param output_dir Character. Directory path where outputs are saved if
 #' save_outputs is TRUE. Must exist. Defaults to NULL.
+#' @param include_all_regions Logical. If TRUE includes All regions plots in output dir
 #'
 #' @return No return value. Generates a plot and optionally saves files.
 #'
 #' @keywords internal
 #'
-plot_ar_pm_monthly <- function(data, save_outputs = FALSE, output_dir = NULL) {
+plot_ar_pm_monthly <- function(data, save_outputs = FALSE, output_dir = NULL, include_all_regions = TRUE) {
   # validate inputs
   if (save_outputs == TRUE && is.null(output_dir)) {
     stop("'output_dir' must be provded to save outputs.")
@@ -1547,6 +1777,9 @@ plot_ar_pm_monthly <- function(data, save_outputs = FALSE, output_dir = NULL) {
   if (save_outputs == TRUE && !file.exists(output_dir)) {
     stop("'output_dir' must exist on disk to save outputs.")
   }
+
+  cols <- get_accessible_plot_colours()
+
   data$month_name <- month.abb[data$month]
   # Aggregate data across all regions by year
   aggregated_data <- data %>%
@@ -1556,47 +1789,55 @@ plot_ar_pm_monthly <- function(data, save_outputs = FALSE, output_dir = NULL) {
       mean_pm = mean(.data$monthly_avg_pm25, na.rm = TRUE)
     ) %>%
     mutate(month_name = factor(.data$month_name, levels = month.abb))
-  all_regions_agg <- data %>%
-    group_by(.data$month_name) %>%
-    summarise(
-      mean_deaths_per_100k = mean(.data$deaths_per_100k, na.rm = TRUE),
-      mean_pm = mean(.data$monthly_avg_pm25, na.rm = TRUE)
-    ) %>%
-    mutate(month_name = factor(.data$month_name, levels = month.abb))
-  all_regions_agg$region <- "All Regions"
-  aggregated_data <- rbind(all_regions_agg, aggregated_data)
+  if (include_all_regions) {
+    all_regions_agg <- data %>%
+      group_by(.data$month_name) %>%
+      summarise(
+        mean_deaths_per_100k = mean(.data$deaths_per_100k, na.rm = TRUE),
+        mean_pm = mean(.data$monthly_avg_pm25, na.rm = TRUE)
+      ) %>%
+      mutate(month_name = factor(.data$month_name, levels = month.abb))
+
+    all_regions_agg$region <- "All Regions"
+    aggregated_data <- rbind(all_regions_agg, aggregated_data)
+  }
+
   # Calculate scaling factor
   scale_factor <- max(aggregated_data$mean_deaths_per_100k) / max(aggregated_data$mean_pm)
+
+  alt_text <- paste(
+    "Monthly dual-axis plot showing deaths per 100,000 population and mean wildfire-related PM2.5 concentration.",
+    "Bars show average deaths per 100,000 population by month.",
+    "The line and points show mean PM2.5 concentration, scaled to the primary axis and labelled on the secondary axis.",
+    if (include_all_regions) {
+      "Each panel represents one region."
+    } else {
+      ""
+    }
+  )
+
   # Plot results
-  all_plots <- c()
+  all_plots <- list()
+
   for (reg in unique(aggregated_data$region)) {
-    region_data <- subset(
-      aggregated_data,
-      aggregated_data$region == reg
-    )
-    title <- paste0(
-      "Monthly Deaths and Mean PM2.5 Concentration - ",
-      reg, " (", min(data$year), " - ", max(data$year), ")"
-    )
-    title_wrapped <- stringr::str_wrap(title, width = 45)
-    plot_ar_pm <- ggplot2::ggplot(
-      region_data,
-      ggplot2::aes(x = .data$month_name)
-    ) +
+    region_data <- subset(aggregated_data, aggregated_data$region == reg)
+
+    plot_ar_pm <- ggplot2::ggplot(region_data, ggplot2::aes(x = .data$month_name)) +
       ggplot2::geom_bar(
         ggplot2::aes(y = .data$mean_deaths_per_100k),
         stat = "identity",
-        fill = "#003c57",
-        alpha = 0.7
+        fill = cols$regional,
+        alpha = 0.85
       ) +
       ggplot2::geom_line(
         ggplot2::aes(y = .data$mean_pm * scale_factor, group = 1),
-        color = "red",
+        color = cols$secondary_dark,
         linewidth = 1
       ) +
       ggplot2::geom_point(
         ggplot2::aes(y = .data$mean_pm * scale_factor),
-        color = "red", size = 1
+        color = cols$secondary_dark,
+        size = 2
       ) +
       ggplot2::scale_y_continuous(
         name = "Deaths per 100,000 population",
@@ -1605,17 +1846,41 @@ plot_ar_pm_monthly <- function(data, save_outputs = FALSE, output_dir = NULL) {
           name = "Mean PM2.5 (ug/m^3)"
         )
       ) +
-      ggplot2::labs(
-        title = title_wrapped,
-        x = "Month"
-      ) +
-      ggplot2::theme_light() +
+      ggplot2::labs(title = reg, x = "Month") +
+      theme_accessible_ggplot() +
+      theme_accessible_ggplot_panel() +
       ggplot2::theme(
-        axis.line = ggplot2::element_line(linewidth = 0.5, colour = "black")
+        legend.position = "none",
+        plot.title = ggplot2::element_text(hjust = 0.5),
+        panel.grid.major.x = ggplot2::element_blank(),
+        axis.title.y = ggplot2::element_text(colour = cols$regional),
+        axis.title.y.right = ggplot2::element_text(colour = cols$secondary_dark)
       )
+
     all_plots[[length(all_plots) + 1]] <- plot_ar_pm
   }
-  combined_plots <- patchwork::wrap_plots(all_plots)
+
+  # combine plots using a maximum of two panels per row
+  n_panels <- length(all_plots)
+  n_cols <- min(2, n_panels)
+  n_rows <- ceiling(n_panels / n_cols)
+
+  combined_plots <- patchwork::wrap_plots(
+    all_plots,
+    ncol = n_cols
+  )
+
+  combined_plots <- combined_plots +
+    accessible_plot_annotation(
+      title = paste0(
+        "Monthly Deaths and Mean Wildfire-related PM2.5 Concentration\n",
+        " (", min(data$year), " - ", max(data$year), ")"
+      ),
+      subtitle = "Bars show deaths per 100,000 population. Line and points show mean PM2.5 concentration.",
+      alt_text = alt_text,
+      width = if (n_panels == 1) 115 else 160
+    )
+
   # sort data
   sorted_data <- aggregated_data[
     order(
@@ -1623,19 +1888,26 @@ plot_ar_pm_monthly <- function(data, save_outputs = FALSE, output_dir = NULL) {
       match(aggregated_data$month_name, month.abb)
     ),
   ]
-  sorted_data <- sorted_data %>% select(all_of(c("region", "month_name", "mean_deaths_per_100k", "mean_pm")))
-  # save csv
+
+  sorted_data <- sorted_data %>%
+    select(all_of(c("region", "month_name", "mean_deaths_per_100k", "mean_pm")))
+
+  # save csv and plot
   if (save_outputs) {
     fpath <- file.path(output_dir, "Monthly_deaths_pm_trends")
-    ggplot2::ggsave(
-      paste0(fpath, ".pdf"),
-      combined_plots,
-      width = length(all_plots) * 5,
-      height = length(all_plots) * 4,
-      limitsize = FALSE
+
+    save_accessible_ggplot(
+      plot_object = combined_plots,
+      output_dir = output_dir,
+      filename = "Monthly_deaths_pm_trends",
+      width = if (n_panels == 1) 8.4 else max(9, n_cols * 5.8),
+      height = if (n_panels == 1) 9.2 else max(6, n_rows * 5.2),
+      alt_text = alt_text
     )
+
     write.csv(sorted_data, paste0(fpath, ".csv"), row.names = FALSE)
   }
+
   return(sorted_data)
 }
 
@@ -1803,6 +2075,7 @@ plot_rr_by_pm <- function(
   if (save_fig == TRUE && !file.exists(output_dir)) {
     stop("'output_dir' must exist on disk to save outputs.")
   }
+  cols <- get_accessible_plot_colours()
   exp_cols <- c(
     "pm_levels",
     "relative_risk",
@@ -1826,21 +2099,37 @@ plot_rr_by_pm <- function(
     )
     all_plots[[length(all_plots) + 1]] <- p
   }
+
+  alt_text <- paste(
+    "Exposure-response curve for wildfire-related PM2.5 and relative risk.",
+    "Each panel represents one region.",
+    "The line shows estimated relative risk across PM2.5 concentration levels.",
+    "The shaded band shows the 95 percent confidence interval.",
+    "Curves are based on relative risks at lag 0."
+  )
+
   # combine and save
-  combined_plots <- patchwork::wrap_plots(all_plots)
+  n_panels <- length(all_plots)
+  n_cols <- min(2, n_panels)
+  n_rows <- ceiling(n_panels / n_cols)
+  combined_plots <- patchwork::wrap_plots(all_plots, ncol = n_cols)
   # add caption
   combined_plots <- combined_plots +
-    patchwork::plot_annotation(
-      caption = "Note: Exposure-response curve(s) are based on relative risk(s) at lag 0."
+    accessible_plot_annotation(
+      title = "Exposure-response Curve for Wildfire-related PM2.5",
+      subtitle = "Line shows relative risk. Shaded area shows 95% confidence interval.",
+      alt_text = alt_text,
+      width = if (n_panels == 1) 115 else 170
     )
+
   if (save_fig) {
-    fpath <- file.path(output_dir, "ER_curve.pdf")
-    ggplot2::ggsave(
-      fpath,
-      combined_plots,
-      width = if (length(combined_plots) == 1) 8 else 5 * length(combined_plots),
-      height = if (length(combined_plots) == 1) 8 else 4 * length(combined_plots),
-      limitsize = FALSE
+    save_accessible_ggplot(
+      plot_object = combined_plots,
+      output_dir = output_dir,
+      filename = "ER_curve",
+      width = if (n_panels == 1) 8.4 else max(9, n_cols * 5.8),
+      height = if (n_panels == 1) 9.2 else max(6, n_rows * 5.2),
+      alt_text = alt_text
     )
   }
   return(combined_plots)
@@ -1866,30 +2155,46 @@ plot_rr_by_pm_core <- function(
     data,
     region_name = "All Regions",
     ylims = c(-2, 2)) {
+
+  cols <- get_accessible_plot_colours()
+
+  alt_text <- paste(
+    "Exposure-response curve for wildfire-related PM2.5 in",
+    region_name,
+    ". The line shows estimated relative risk across PM2.5 concentration levels.",
+    "The shaded band shows the 95 percent confidence interval."
+  )
+
   # create plot object
-  title <- paste0("All-cause mortality", " (", region_name, ")")
-  p <- ggplot2::ggplot(data, ggplot2::aes(x = .data$pm_levels, y = .data$relative_risk)) +
+  p <- ggplot2::ggplot(
+    data,
+    ggplot2::aes(x = .data$pm_levels, y = .data$relative_risk)
+  ) +
     ggplot2::geom_ribbon(
       ggplot2::aes(ymin = .data$ci_lower, ymax = .data$ci_upper),
       alpha = 0.2,
-      fill = "#4d7789"
+      fill = cols$primary
     ) +
-    ggplot2::geom_line(color = "#003c57", linewidth = 1) +
-    ggplot2::scale_y_continuous(
-      limits = ylims,
-      labels = scales::number_format(accuracy = 0.01)
+    ggplot2::geom_line(color = cols$primary, linewidth = 1) +
+    ggplot2::scale_y_continuous(limits = ylims, labels = scales::number_format(accuracy = 0.01)) +
+    ggplot2::labs(
+      title = region_name,
+      x = "PM2.5 (ug/m3)",
+      y = "Relative Risk"
     ) +
-    ggplot2::labs(title = title, x = "PM2.5 (ug/m3)", y = "Relative Risk") +
-    ggplot2::theme_minimal(base_size = 14) +
+    theme_accessible_ggplot() +
+    theme_accessible_ggplot_panel() +
     ggplot2::theme(
-      axis.line = ggplot2::element_line(linewidth = 0.5, colour = "black"),
-      plot.background = ggplot2::element_rect(color = "#222222", linewidth = 1),
-      panel.border = ggplot2::element_rect(
-        color = "#222222",
-        fill = NA,
-        linewidth = 0.5
-      )
+      legend.position = "none",
+      plot.title = ggplot2::element_text(hjust = 0.5),
+      axis.text.x = ggplot2::element_text(angle = 0, hjust = 0.5, vjust = 0.5)
     )
+
+  p <- add_ggplot_alt_caption(
+    plot_object = p,
+    alt_text = alt_text
+  )
+
   return(p)
 }
 
@@ -1915,18 +2220,23 @@ plot_ar_by_region <- function(data, output_dir = ".") {
   # validation
   if (is.null(output_dir)) stop("'output_dir' required.")
   if (!file.exists(output_dir)) stop("'output_dir' does not exist.")
+
+  cols <- get_accessible_plot_colours()
+
   exp_cols <- c(
     "region",
     "deaths_per_100k",
     "lower_ci_deaths_per_100k",
     "upper_ci_deaths_per_100k"
   )
+
   if (!(all(exp_cols %in% colnames(data)))) {
     stop(
       "'data' must contain the following columns: ",
       paste(exp_cols, collapse = ", ")
     )
   }
+
   # aggregate dataset
   aggregated_data <- data %>%
     group_by(.data$region) %>%
@@ -1941,41 +2251,73 @@ plot_ar_by_region <- function(data, output_dir = ".") {
         na.rm = TRUE
       )
     )
+
+  alt_text <- paste(
+    "Bar chart showing average deaths per 100,000 population attributable to wildfire-related PM2.5 exposure by region.",
+    "Each bar represents one region.",
+    "Regions are ordered by average attributable deaths per 100,000 population in descending order."
+  )
+
+  title_text <- stringr::str_wrap(
+    "Average deaths per 100k attributable to Wildfire-related PM2.5 exposure",
+    width = 78
+  )
+
+  note_text <- "Note: Please refer to section 4 of wildfire methods documentation for interpretation guidelines."
+
+  caption_text <- paste(
+    c(strwrap(note_text, width = 170),"","",
+      strwrap(paste0("Alt text: ", alt_text), width = 170)),
+    collapse = "\n")
+
   # draw plot and save
   p <- ggplot2::ggplot(
     aggregated_data,
     ggplot2::aes(
-      x = forcats::fct_reorder(
+      y = forcats::fct_reorder(
         .data$region,
         .data$mean_deaths_per_100k,
         .desc = TRUE
       ),
-      y = .data$mean_deaths_per_100k
+      x = .data$mean_deaths_per_100k
     )
   ) +
-    ggplot2::geom_col(fill = "#003c57") +
-    ggplot2::labs(
-      title = "Average deaths per 100k attributable to Wildfire-related PM2.5 exposure",
-      x = "Regions",
-      y = "Deaths per 100k population"
+    ggplot2::geom_col(
+      fill = cols$regional,
+      alpha = 0.85
     ) +
-    ggplot2::theme_minimal(base_family = "sans") +
+    ggplot2::labs(
+      title = title_text,
+      subtitle = "Horizontal bars show average attributable deaths per 100,000 population by region.",
+      y = "Regions",
+      x = "Deaths per 100k population",
+      caption = caption_text
+    ) +
+    theme_accessible_ggplot() +
     ggplot2::theme(
-      plot.background = ggplot2::element_rect(fill = "white", color = NA),
-      panel.background = ggplot2::element_rect(fill = "white", color = NA),
-      axis.text = ggplot2::element_text(color = "black"),
-      axis.title = ggplot2::element_text(color = "black"),
-      plot.title = ggplot2::element_text(color = "black"),
-      axis.line = ggplot2::element_line(linewidth = 0.5, colour = "black"),
-      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
+      legend.position = "none",
+      plot.title = ggplot2::element_text(
+        hjust = 0.5, margin = ggplot2::margin(t = 14, b = 8)),
+      plot.subtitle = ggplot2::element_text(
+        hjust = 0.5, margin = ggplot2::margin(b = 18)),
+
+      # Makes alt text start as far left as ggplot allows
+      plot.caption.position = "plot",
+      plot.caption = ggplot2::element_text(
+        hjust = 0, size = 10.5, face = "italic", lineheight = 1.12,
+        margin = ggplot2::margin(t = 18, r = 0, b = 8, l = 0)),
+
+      # Internal spacing only
+      plot.margin = ggplot2::margin(t = 34, r = 34, b = 44, l = 8),
+      axis.text.y = ggplot2::element_text(size = 10),
+      axis.text.x = ggplot2::element_text(angle = 0, hjust = 0.5)
     )
+
   # save plot
-  ggplot2::ggsave(
-    file.path(output_dir, "AR_by_region.pdf"),
-    p,
-    width = 8,
-    height = 6
-  )
+  save_accessible_ggplot(
+    plot_object = p, output_dir = output_dir,
+    filename = "AR_by_region", width = 13, height = 9.5, alt_text = alt_text)
+
   return(p)
 }
 
@@ -1999,60 +2341,96 @@ plot_an_by_region <- function(data, output_dir = ".") {
   # validation
   if (is.null(output_dir)) stop("'output_dir' required.")
   if (!file.exists(output_dir)) stop("'output_dir' does not exist.")
+
+  cols <- get_accessible_plot_colours()
+
   exp_cols <- c(
     "region",
     "total_attributable_number"
   )
+
   if (!(all(exp_cols %in% colnames(data)))) {
     stop(
       "'data' must contain the following columns: ",
       paste(exp_cols, collapse = ", ")
     )
   }
+
   # aggregate dataset
   aggregated_data <- data %>%
     group_by(.data$region) %>%
     summarise(
       sum_total_an = sum(.data$total_attributable_number, na.rm = TRUE),
     )
+
+  alt_text <- paste(
+    "Bar chart showing total attributable number of deaths due to wildfire-related PM2.5 exposure by region.",
+    "Each bar represents one region.",
+    "Regions are ordered by total attributable number of deaths in descending order."
+  )
+
+  title_text <- stringr::str_wrap(
+    "Total attributable number of deaths due to Wildfire-related PM2.5 exposure",
+    width = 78
+  )
+
+  note_text <- "Note: Please refer to section 4 of wildfire methods documentation for interpretation guidelines."
+
+  caption_text <- paste(
+    c(strwrap(note_text, width = 170),"","",
+      strwrap(paste0("Alt text: ", alt_text), width = 170)), collapse = "\n")
+
   # draw plot and save
   p <- ggplot2::ggplot(
     aggregated_data,
     ggplot2::aes(
-      x = forcats::fct_reorder(.data$region, .data$sum_total_an, .desc = TRUE),
-      y = .data$sum_total_an
+      y = forcats::fct_reorder(
+        .data$region,
+        .data$sum_total_an,
+        .desc = TRUE
+      ),
+      x = .data$sum_total_an
     )
   ) +
-    ggplot2::geom_col(fill = "#003c57") +
+    ggplot2::geom_col(fill = cols$regional, alpha = 0.85) +
+    ggplot2::scale_x_continuous(labels = scales::comma) +
     ggplot2::labs(
-      title = "Total attributable number of deaths due to Wildfire-related PM2.5 exposure",
-      x = "Regions",
-      y = "Attributable Number of Deaths"
+      title = title_text,
+      subtitle = "Horizontal bars show total attributable deaths by region.",
+      y = "Regions",
+      x = "Attributable Number of Deaths",
+      caption = caption_text
     ) +
-    ggplot2::theme_minimal(base_family = "sans") +
+    theme_accessible_ggplot() +
     ggplot2::theme(
-      plot.background = ggplot2::element_rect(fill = "white", color = NA),
-      panel.background = ggplot2::element_rect(fill = "white", color = NA),
-      axis.text = ggplot2::element_text(color = "black"),
-      axis.title = ggplot2::element_text(color = "black"),
-      plot.title = ggplot2::element_text(color = "black"),
-      axis.line = ggplot2::element_line(linewidth = 0.5, colour = "black"),
-      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
+      legend.position = "none",
+      plot.title = ggplot2::element_text(
+        hjust = 0.5, margin = ggplot2::margin(t = 14, b = 8)),
+      plot.subtitle = ggplot2::element_text(
+        hjust = 0.5, margin = ggplot2::margin(b = 18)),
+
+      # Makes alt text start as far left as ggplot allows
+      plot.caption.position = "plot",
+      plot.caption = ggplot2::element_text(
+        hjust = 0, size = 10.5, face = "italic", lineheight = 1.12,
+        margin = ggplot2::margin(t = 18, r = 0, b = 8, l = 0)
+      ),
+
+      # Internal spacing only
+      plot.margin = ggplot2::margin(t = 34, r = 34, b = 44, l = 8),
+      axis.text.y = ggplot2::element_text(size = 10),
+      axis.text.x = ggplot2::element_text(angle = 0, hjust = 0.5)
     )
 
   # save plot
-  ggplot2::ggsave(
-    file.path(output_dir, "AN_by_region.pdf"),
-    p,
-    width = 8,
-    height = 6
-  )
+  save_accessible_ggplot(
+    plot_object = p, output_dir = output_dir,
+    filename = "AN_by_region", width = 13, height = 9.5, alt_text = alt_text)
+
   return(p)
 }
 
-
-#' This is full analysis pipeline to analyse the impact of wildfire-related PM2.5 on a health
-#' outcome.
+#' Full analysis for the 'mortality attributable to wildfire-related PM2.5' indicator
 #'
 #' @description Runs full analysis pipeline for analysis of the impact of
 #' wildfire-related PM2.5 on a health outcome using time stratified case-crossover approach
@@ -2097,14 +2475,11 @@ plot_an_by_region <- function(data, output_dir = ".") {
 #' lags for wildfire PM2.5. Default is 3.
 #' @param temperature_lag Integer. The number of days for which to calculate
 #' the lags for temperature. Default is 1.
-#' @param spline_temperature_lag Integer. The number of days of lag in the
-#' temperature variable from which to generate splines. Default is 0 (unlagged
-#' temperature variable).
 #' @param spline_temperature_degrees_freedom Integer. Degrees of freedom for the
 #' spline(s).
 #' @param predictors_vif Character vector with each of the predictors to
 #' include in the model. Must contain at least 2 variables. Defaults to NULL.
-#' @param calc_relative_risk_by_region Bool. Whether to calculate Relative Risk by region.
+#' @param calculate_by_region Bool. Whether to calculate Relative Risk by region.
 #' Default: FALSE
 #' @param scale_factor_wildfire_pm Numeric. The value to divide the wildfire
 #' PM2.5 concentration variables by for alternative interpretation of outputs.
@@ -2122,6 +2497,23 @@ plot_an_by_region <- function(data, output_dir = ".") {
 #' for each predictor. Defaults to FALSE.
 #' @param print_model_summaries Bool. Whether to print the model summaries to
 #' console. Defaults to FALSE.
+#' @param run_descriptive Logical. Whether to run descriptive statistics. Default FALSE.
+#' @param plot_corr_matrix Logical. Plot correlation matrix. Default TRUE.
+#' @param correlation_method Character. Correlation method for corr matrix
+#' (e.g.,"pearson", "spearman"). Default "pearson".
+#' @param plot_dist Logical. Plot distributions (hist/density) for key variables.
+#' Default TRUE.
+#' @param plot_na_counts Logical. Plot missingness/NA counts. Default TRUE.
+#' @param plot_scatter Logical. Plot scatter plots for key pairs. Default TRUE.
+#' @param plot_box Logical. Plot boxplots by region/season where applicable.
+#' Default TRUE.
+#' @param plot_seasonal Logical. Plot seasonal summaries. Default TRUE.
+#' @param plot_regional Logical. Plot regional summaries. Default TRUE.
+#' @param plot_total Logical. Plot overall totals where relevant. Default TRUE.
+#' @param detect_outliers Logical. Flag potential outliers in descriptive workflow.
+#' Default TRUE.
+#' @param calculate_rate Logical. Whether to calculate rate variables during
+#' descriptive stats (e.g., deaths per population). Default FALSE
 #'
 #' @details This analysis pipeline requires a daily time series with mean wildfire PM2.5,
 #' mean temperature and health outcome (all-cause mortality, respiratory, cardiovascular,
@@ -2169,18 +2561,17 @@ plot_an_by_region <- function(data, output_dir = ".") {
 #' population_col = "population",
 #' rh_col = NULL,
 #' wind_speed_col = NULL,
-#' pm_2_5_col = " mean_PM ",
+#' pm_2_5_col = "mean_PM",
 #' wildfire_lag = 3,
 #' temperature_lag = 1,
-#' spline_temperature_lag = 0,
-#' spline_temperature_degrees_freedom = 4,
+#' spline_temperature_degrees_freedom = 6,
 #' predictors_vif = NULL,
-#' calc_relative_risk_by_region = FALSE,
+#' calculate_by_region = TRUE,
 #' scale_factor_wildfire_pm = 10,
-#' save_fig = FALSE,
-#' save_csv = FALSE,
+#' save_fig = TRUE,
+#' save_csv = TRUE,
 #' output_folder_path = tempdir(),
-#' create_run_subdir = FALSE,
+#' create_run_subdir = TRUE,
 #' print_vif = FALSE,
 #' print_model_summaries = FALSE)
 #' }
@@ -2239,17 +2630,44 @@ wildfire_do_analysis <- function(
     pm_2_5_col = NULL,
     wildfire_lag = 3,
     temperature_lag = 1,
-    spline_temperature_lag = 0,
     spline_temperature_degrees_freedom = 6,
     predictors_vif = NULL,
-    calc_relative_risk_by_region = FALSE,
+    calculate_by_region = FALSE,
     scale_factor_wildfire_pm = 10,
     save_fig = FALSE,
     save_csv = FALSE,
     output_folder_path = NULL,
     create_run_subdir = FALSE,
     print_vif = FALSE,
-    print_model_summaries = FALSE) {
+    print_model_summaries = FALSE,
+    # Descriptive statistics settings
+    run_descriptive = FALSE,
+    plot_corr_matrix = TRUE,
+    correlation_method = "pearson",
+    plot_dist = TRUE,
+    plot_na_counts = TRUE,
+    plot_scatter = TRUE,
+    plot_box = TRUE,
+    plot_seasonal = TRUE,
+    plot_regional = TRUE,
+    plot_total = TRUE,
+    detect_outliers = TRUE,
+    calculate_rate = FALSE) {
+
+  # When invoked via the plumber API headless R has no graphics device and
+  # plots can't be returned over JSON - the client renders its own. Force
+  # all side-effectful output parameters off so internal helpers never try
+  # to draw or write files.
+  api_mode <- isTRUE(getOption("climatehealth.api_mode", FALSE))
+  if (api_mode) {
+    save_fig <- FALSE
+    save_csv <- FALSE
+    output_folder_path <- NULL
+    create_run_subdir <- FALSE
+    print_vif <- FALSE
+    print_model_summaries <- FALSE
+  }
+
   if (create_run_subdir) {
     if (is.null(output_folder_path)) {
       stop("`output_folder_path` is required when `create_run_subdir = TRUE`.")
@@ -2266,6 +2684,7 @@ wildfire_do_analysis <- function(
   if (save_fig == TRUE && !file.exists(file.path(output_folder_path, "model_validation"))) {
     dir.create(file.path(output_folder_path, "model_validation"), recursive = TRUE)
   }
+
   # Validate shape_region_col is provided when joining wildfire data
   if (join_wildfire_data && is.null(shape_region_col)) {
     stop("shape_region_col is required when join_wildfire_data = TRUE")
@@ -2286,10 +2705,10 @@ wildfire_do_analysis <- function(
     wind_speed_col = wind_speed_col,
     pm_2_5_col = pm_2_5_col
   )
-  if (calc_relative_risk_by_region && !"pop" %in% names(data)) {
+  if (calculate_by_region && !"pop" %in% names(data)) {
     stop(
       paste(
-        "Population data are required when calc_relative_risk_by_region = TRUE.",
+        "Population data are required when calculate_by_region = TRUE.",
         "Supply `population_col` or include a `pop` column in the input data."
       )
     )
@@ -2302,17 +2721,75 @@ wildfire_do_analysis <- function(
     wildfire_lag = wildfire_lag,
     temperature_lag = temperature_lag
   )
-  # Create splines
-  data <- create_temperature_splines(
-    data = data,
-    nlag = spline_temperature_lag,
-    degrees_freedom = spline_temperature_degrees_freedom
-  )
   # Stratify data by time period
   data <- time_stratify(data = data)
+
+
+  # Descriptive stats
+  if (run_descriptive) {
+    # Guard checks incase of missing output folder
+    if (is.null(output_folder_path)) {
+      stop("run_descriptive = TRUE requires output_folder_path to be set.")
+    }
+
+    # Setup descriptive stats subfolder (run-scoped)
+    descriptive_output_path <- file.path(output_folder_path, "descriptive_stats")
+    dir.create(descriptive_output_path, recursive = TRUE, showWarnings = FALSE)
+
+    descriptive_independent_cols <- c("tmean", "mean_PM")
+    if (!is.null(rh_col)) {
+      descriptive_independent_cols <- c(descriptive_independent_cols, "rh")
+    }
+    if (!is.null(wind_speed_col)) {
+      descriptive_independent_cols <- c(descriptive_independent_cols, "wind_speed")
+    }
+
+    # run descriptive stats
+    tryCatch(
+      {
+        run_descriptive_stats(
+          data = data,
+          output_path = output_folder_path,
+          aggregation_column = "region",
+          population_col = "pop",
+          dependent_col = "health_outcome",
+          independent_cols = descriptive_independent_cols,
+          timeseries_col = "date",
+          plot_corr_matrix = plot_corr_matrix,
+          correlation_method = correlation_method,
+          plot_dist = plot_dist,
+          plot_ma = TRUE,
+          ma_days = 100,
+          ma_sides = 1,
+          plot_na_counts = plot_na_counts,
+          plot_scatter = plot_scatter,
+          plot_box = plot_box,
+          plot_seasonal = plot_seasonal,
+          plot_regional = plot_regional,
+          plot_total = plot_total,
+          detect_outliers = detect_outliers,
+          calculate_rate = calculate_rate,
+          create_base_dir = FALSE
+        )
+      },
+      error = function(e) {
+        stop(
+          paste0(
+            "\nDescriptive statistics failed and the pipeline has been halted.\n",
+            "Reason: ", e$message
+          ),
+          call. = FALSE
+        )
+      }
+    )
+  }
+
   # Calculate QAIC
   calculate_qaic(
     data = data,
+    temperature_lag = temperature_lag,
+    spline_temperature_degrees_freedom = spline_temperature_degrees_freedom,
+    calculate_by_region = calculate_by_region,
     save_csv = save_csv,
     output_folder_path = output_folder_path,
     print_results = print_model_summaries
@@ -2322,6 +2799,8 @@ wildfire_do_analysis <- function(
     check_wildfire_vif(
       data = data,
       predictors = predictors_vif,
+      calculate_by_region = calculate_by_region,
+      join_wildfire_data = join_wildfire_data,
       save_csv = save_csv,
       output_folder_path = output_folder_path,
       print_vif = print_vif
@@ -2330,8 +2809,10 @@ wildfire_do_analysis <- function(
   # Obtain and plot RR values
   rr_results <- calculate_wildfire_rr_by_region(
     data = data,
+    temperature_lag = temperature_lag,
+    spline_temperature_degrees_freedom = spline_temperature_degrees_freedom,
     scale_factor_wildfire_pm = scale_factor_wildfire_pm,
-    calc_relative_risk_by_region = calc_relative_risk_by_region,
+    calculate_by_region = calculate_by_region,
     save_fig = save_fig,
     output_folder_path = output_folder_path,
     print_model_summaries = print_model_summaries
@@ -2339,7 +2820,7 @@ wildfire_do_analysis <- function(
   plot_RR(
     rr_data = rr_results,
     wildfire_lag = wildfire_lag,
-    by_region = calc_relative_risk_by_region,
+    by_region = calculate_by_region,
     save_fig = save_fig,
     output_folder_path = output_folder_path
   )
@@ -2348,7 +2829,7 @@ wildfire_do_analysis <- function(
     data = data,
     relative_risk_overall = rr_results,
     scale_factor_wildfire_pm = scale_factor_wildfire_pm,
-    wildfire_lag = wildfire_lag,
+    wildfire_lag = 0,
     pm_vals = NULL
   )
   plot_rr_by_pm(
@@ -2360,18 +2841,27 @@ wildfire_do_analysis <- function(
   af_an_results <- NULL
   annual_af_an_results <- NULL
   ar_pm_monthly <- NULL
-  if (calc_relative_risk_by_region == TRUE) {
-    # get AN/AR
-    daily_AF_AN <- calculate_daily_AF_AN(data = data, rr_data = rr_results)
-    af_an_results <- summarise_AF_AN(data = daily_AF_AN)
-    annual_af_an_results <- summarise_AF_AN(data = daily_AF_AN, monthly = FALSE)
-    # Plot aggregated AN for all regions and individual regions
-    # Plot AR and PM monthly values
-    ar_pm_monthly <- join_ar_and_pm_monthly(pm_data, af_an_results)
-    ar_pm_monthly <- plot_ar_pm_monthly(ar_pm_monthly, save_fig, output_folder_path)
-    # Plot AR/AN by region
-    if (save_fig == TRUE) {
-      plot_aggregated_AF(af_an_results, TRUE, output_folder_path)
+
+  # get AN/AR
+  daily_AF_AN <- calculate_daily_AF_AN(data = data, calculate_by_region,
+                                       scale_factor_wildfire_pm = scale_factor_wildfire_pm, rr_data = rr_results)
+  af_an_results <- summarise_AF_AN(data = daily_AF_AN)
+  annual_af_an_results <- summarise_AF_AN(data = daily_AF_AN, monthly = FALSE)
+  # Plot aggregated AN for all regions and individual regions
+  # Plot AR and PM monthly values
+  ar_pm_monthly <- join_ar_and_pm_monthly(pm_data, af_an_results)
+  ar_pm_monthly <- plot_ar_pm_monthly(ar_pm_monthly,
+                                      save_fig,
+                                      output_folder_path,
+                                      include_all_regions = FALSE)
+  # Plot AR/AN by region
+  if (save_fig == TRUE) {
+    plot_aggregated_AF(
+      data = annual_af_an_results,
+      by_region = calculate_by_region,
+      include_all_regions = !calculate_by_region,
+      output_dir = output_folder_path)
+    if (calculate_by_region){
       plot_ar_by_region(
         data = af_an_results,
         output_dir = output_folder_path
@@ -2382,6 +2872,7 @@ wildfire_do_analysis <- function(
       )
     }
   }
+
   # Save outputs (conditionally)
   if (save_csv == TRUE) {
     save_wildfire_results(

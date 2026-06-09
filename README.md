@@ -1,6 +1,10 @@
-![Static Badge](https://img.shields.io/badge/Status-In%20Development-darkgreen?logo=git&logoColor=white) ![Static Badge](https://img.shields.io/badge/Release%20Version-1.0.0-pink?logo=github) ![Static Badge](https://img.shields.io/badge/R_Version-4.4.1-pink?logo=R) [![codecov](https://codecov.io/gh/onssoschi/climatehealth/graph/badge.svg)](https://app.codecov.io/gh/onssoschi/climatehealth)
+![Static Badge](https://img.shields.io/badge/Status-In%20Development-darkgreen?logo=git&logoColor=white) ![Static Badge](https://img.shields.io/badge/Release%20Version-1.0.2-pink?logo=github) ![Static Badge](https://img.shields.io/badge/R_Version-4.4.1-pink?logo=R) [![codecov](https://codecov.io/gh/onssoschi/climatehealth/graph/badge.svg)](https://app.codecov.io/gh/onssoschi/climatehealth)
 [![Build R Package on Release](https://github.com/onssoschi/climatehealth/actions/workflows/r_release.yml/badge.svg)](https://github.com/onssoschi/climatehealth/actions/workflows/r_release.yml)
 [![R CMD Check and Coverage](https://github.com/onssoschi/climatehealth/actions/workflows/r_check_and_coverage.yml/badge.svg)](https://github.com/onssoschi/climatehealth/actions/workflows/r_check_and_coverage.yml)
+
+<img src="man/figures/logo.png" align="right" width="180" alt="SOSCHI logo" />
+
+<br><br><br>
 
 # Climatehealth Package
 
@@ -25,18 +29,22 @@
 
 This package provides functions for calculating climate–health indicators and supporting the production of climate–health statistics. The methods implemented in the package follow the statistical framework for climate–health indicators developed under the Standards for Official Statistics on Climate–Health Interactions (SOSCHI) project. You can find out more and stay up to date with the [SOSCHI project here](https://climate-health.officialstatistics.org/).
 
+The methods for measuring headline outcome indicators for the SOSCHI topics were endorsed by the 57th United Nations Statistical Commission for inclusion in the Global Set of Climate Change Statistics and Indicators (see decision 57/109 (b) in the [Final Report](https://unstats.un.org/UNSDWebsite/statcom/session_57/documents/2026-35-FinalReport-EE.pdf)).
+
+The package is also [now available on CRAN](https://CRAN.R-project.org/package=climatehealth).
+
 ### SOSCHI Topics and Indicators
 
 This package contains scientific functions dedicated to the following topics in the SOSCHI framework. Please note the final methods documents are still in development, so the versions linked below are earlier alpha versions.
 
-| **Topic**                                                       | **Topic Owner** | **Methods**                                                      |
-|--------------------------------------------------------------------|-----------------|---------------------------------------------------------------------|
-| Temperature-related health effects                                   | ONS             | [Methodology Document](https://doi.org/10.5281/zenodo.14865904)     |
-| Health effects of wildfires        | ONS             | [Methodology Document](https://doi.org/10.5281/zenodo.14052183)     |
-| Mental health                                                      | ONS             | [Methodology Document](https://doi.org/10.5281/zenodo.14050224)     |
-| Water-borne diseases                                                       | AIMS            | [Methodology Document](https://doi.org/10.5281/zenodo.14871506)     |
-| Health effects of air pollution                                                      | AIMS            | [Methodology Document](https://doi.org/10.5281/zenodo.14871506)     |
-| Vector-borne diseases                                                            | RIPS/AIMS       | [Methodology Document](https://doi.org/10.5281/zenodo.14871506)     |
+| **Topic**                                                       | **Topic Owner** | **Methods**                                                      | **Notes** |
+|--------------------------------------------------------------------|-----------------|---------------------------------------------------------------------|-----------|
+| Temperature-related health effects                                   | ONS             | [Methodology Document](https://doi.org/10.5281/zenodo.14865904)     | The temperature-related health effects code and associated analysis functions are undergoing revision and review corrections. Updates to the R package are coming soon. Please check back later. |
+| Health effects of wildfires        | ONS             | [Methodology Document](https://doi.org/10.5281/zenodo.14052183)     | |
+| Mental health                                                      | ONS             | [Methodology Document](https://doi.org/10.5281/zenodo.14050224)     | |
+| Water-borne diseases                                                       | AIMS            | [Methodology Document](https://doi.org/10.5281/zenodo.14871506)     | |
+| Health effects of air pollution                                                      | AIMS            | [Methodology Document](https://doi.org/10.5281/zenodo.14871506)     | |
+| Vector-borne diseases                                                            | RIPS/AIMS       | [Methodology Document](https://doi.org/10.5281/zenodo.14871506)     | |
 
 > [!NOTE]
 > Please note that there may be some inconsistencies between the indicators and methods included in the Github code/R package, and those described in the corresponding SOSCHI topic documents, and/or related analysis publications. This is because the final methods documents are still in development, so those linked below in the section 'SOSCHI Topics and Indicators' are an earlier alpha version. 

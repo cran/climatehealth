@@ -1,7 +1,7 @@
 Package: climatehealth
 Title: Statistical Tools for Modelling Climate-Health Impacts
-Version: 1.0.1
-Date: 2026-04-08
+Version: 1.0.2
+Date: 2026-06-09
 Authors@R: 
     c(
       person("Charlie", "Browning", role = "aut"),
@@ -49,21 +49,21 @@ Description: Tools for producing climate-health indicators and supporting
               in the Standards for Official Statistics on Climate-Health
               Interactions (SOSCHI) project
               <https://climate-health.officialstatistics.org>. For methodologies,
-              see Watkins et al. (2025) <doi:10.5281/zenodo.14865904>,
-              Brown et al. (2024) <doi:10.5281/zenodo.14052183>,
-              Pearce et al. (2024) <doi:10.5281/zenodo.14050224>,
-              Byukusenge et al. (2025) <doi:10.5281/zenodo.15585042>,
-              Dzakpa et al. (2025) <doi:10.5281/zenodo.14881886>, and
-              Dzakpa et al. (2025) <doi:10.5281/zenodo.14871506>.
+              see Watkins et al. (2026) <doi:10.5281/zenodo.14865904>,
+              Jose et al. (2026) <doi:10.5281/zenodo.14052183>,
+              Pearce et al. (2026) <doi:10.5281/zenodo.14050224>,
+              Byukusenge et al. (2026) <doi:10.5281/zenodo.15585042>,
+              Dzakpa et al. (2026) <doi:10.5281/zenodo.14881886>, and
+              Dzakpa et al. (2026) <doi:10.5281/zenodo.14871506>.
 License: MIT + file LICENSE
 Encoding: UTF-8
 RoxygenNote: 7.3.3
 Imports: car, data.table, dlnm, dplyr, Epi, forcats, exactextractr,
-        ggplot2, ggtext, gnm, graphics, grDevices, gplots, lifecycle,
-        lme4, lubridate, metafor, mgcv, mixmeta, ncdf4, patchwork,
-        pkgbuild, purrr, raster, RColorBrewer, readr, readxl, reshape2,
-        rlang, scales, sf, spdep, splines, stats, stringr, tibble,
-        tidyr, tools, tseries, tsModel (>= 0.6-2), utils, xfun, zoo
+        ggplot2, gnm, graphics, grDevices, lifecycle, lme4, lubridate,
+        metafor, mgcv, mixmeta, ncdf4, patchwork, pkgbuild, png, purrr,
+        raster, RColorBrewer, readr, readxl, reshape2, rlang, scales,
+        sf, spdep, splines, stats, stringr, tibble, tidyr, tools,
+        tseries, tsModel (>= 0.6-2), utils, xfun, zoo
 VignetteBuilder: knitr
 Suggests: covr, knitr, rmarkdown, devtools, DT, htmltools, INLA,
         mockery, mvmeta, openxlsx, patrick, pkgload, stringdist, terra,
@@ -73,7 +73,7 @@ Additional_repositories: https://inla.r-inla-download.org/R/stable/
 Depends: R (>= 4.4.0)
 Config/rcmdcheck/ignore-inconsequential-notes: true
 NeedsCompilation: no
-Packaged: 2026-04-08 16:53:32 UTC; omekek
+Packaged: 2026-06-09 09:02:55 UTC; omekek
 Author: Charlie Browning [aut],
   Kenechi Omeke [aut, cre],
   Etse Yawo Dzakpa [aut],
@@ -101,4 +101,4 @@ Author: Charlie Browning [aut],
   Office for National Statistics [cph] (SOSCHI Project)
 Maintainer: Kenechi Omeke <climate.health@ons.gov.uk>
 Repository: CRAN
-Date/Publication: 2026-04-08 20:30:02 UTC
+Date/Publication: 2026-06-09 10:00:09 UTC

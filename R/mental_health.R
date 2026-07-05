@@ -777,8 +777,17 @@ mh_add_national_data <- function(
     cb_list,
     mm,
     minpercreg) {
+
   # Aggregate national level data
   national_data <- as.data.frame(do.call(rbind, df_list))
+
+  if (country %in% names(df_list)) {
+    stop(
+      "`country` matches an existing region in `df_list` and would overwrite it. ",
+      "Please use a different country label for the pooled output, or remove the ",
+      "country-level region from the input data."
+    )
+  }
 
   nat_pop <- pop_list[[country]] %>%
     dplyr::rename(nat_population = all_of("population"))
@@ -1408,7 +1417,7 @@ mh_attr_tables <- function(
   attr_yr_list <- attr_yr_list[region_order]
 
   attr_mth_list <- res_list[["monthly"]] %>%
-    dplyr::mutate(month = month.name[.data$month]) %>%
+    dplyr::mutate(month = month.name[as.integer(as.character(.data$month))]) %>%
     aggregate_by_column("region")
   attr_mth_list <- attr_mth_list[region_order]
 
@@ -2376,7 +2385,8 @@ mh_save_results <- function(
 #' @param country Character. Name of country for national level estimates.
 #' @param meta_analysis Boolean. Whether to perform a meta-analysis.
 #' @param var_fun Character. Exposure function for argvar
-#' (see dlnm::crossbasis). Defaults to 'bs'.
+#' (see dlnm::crossbasis). Defaults to 'bs'. The climatehealth package only
+#' supports B-spline functions.
 #' @param var_degree Integer. Degree of the piecewise polynomial for argvar
 #' (see dlnm:crossbasis). Defaults to 2 (quadratic).
 #' @param var_per Vector. Internal knot positions for argvar
